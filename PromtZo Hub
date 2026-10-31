@@ -41,7 +41,7 @@ function PromtZoBanner.Show()
  |_|   |_| \_\\___/|_|  |_| |_| /____| \___/  |_| |_|\___/|____/ 
 ]],
         rule,
-        "   BUILD AN ANT EMPIRE  //  PromtZo Hub (GearShop + Halloween)",
+        "   BUILD AN ANT EMPIRE  //  PromtZo Hub (Halloween Fixed)",
         "   executor: " .. executor .. "   //   player: " .. game:GetService("Players").LocalPlayer.Name,
         rule,
     }, "\n"))
@@ -102,8 +102,8 @@ xDTaraZ.Config = {
     PlaceId = 78490532994307,
     UiSource = "https://raw.githubusercontent.com/xDTaraZz/Roblox-Scripts/refs/heads/main/ui.lua",
     UpdateLog = {
-        { "2026-11-01", "Rebranded to PromtZo Hub\nAdded Auto Clear Gear Shop (Potions & Crystals)\nAdded Halloween 2026 Event automation\nAuto Knock Door, Wheel Spin, Pumpkin Chest & Will-o'-Wisps" },
-        { "2026-10-15", "Added Build An Ant Empire support\nKaitun, food farming and auto sell\nAuto roll, rarity filters and best ants\nPool and stat upgrades with a cash reserve" },
+        { "2026-11-01", "Fixed Halloween packets from live call logs\nAdded HalloweenTreasureRequest & SetBackpackHeldEntry (Will-o'-Wisps)\nAdded DungeonCommand Auto Clicker, Auto Start & Auto PlaceTimeCoin\nUpdated ClaimAntReward with PumpkinGrants support" },
+        { "2026-10-31", "Rebranded to PromtZo Hub\nAdded Auto Clear Gear Shop (Potions & Crystals)\nAdded Halloween 2026 Event automation" },
     },
     LoadTimeout = 10,
     RemoteTimeout = 8,
@@ -145,7 +145,7 @@ xDTaraZ.State = {
     Actions = {},
     UiQueue = {},
     Buttons = {},
-    Metrics = { Rolls = 0, Claims = 0, Sales = 0, Gold = 0, GearBought = 0, HalloweenActions = 0 },
+    Metrics = { Rolls = 0, Claims = 0, Sales = 0, Gold = 0, GearBought = 0, HalloweenActions = 0, DungeonClicks = 0 },
     ChildThreads = {},
     Failures = {},
     Halted = {},
@@ -157,6 +157,13 @@ xDTaraZ.State = {
     BossActive = false,
     SeenCodes = {},
     CodeResults = {},
+    -- Live Captured Halloween & Dungeon State
+    DungeonSessionId = nil,
+    DungeonTransitionId = nil,
+    DungeonCoinId = 1,
+    WispSlotPos = 7,
+    TreasureChestId = 12,
+    BroomRequestId = 1,
     Opt = {
         KeepGold = 1000,
         SellMinPrice = 0,
@@ -187,14 +194,19 @@ xDTaraZ.State = {
         GearShopInterval = 5.0,
         GearFilter = {},
         -- Halloween Event Options
+        HalloweenAutoTp = true,
         AutoHalloweenCheckIn = false,
         AutoHalloweenSpin = false,
         AutoHalloweenChest = false,
         AutoHalloweenWisps = false,
+        AutoHoldWisps = false,
+        AutoDungeonStart = false,
+        AutoDungeonClick = false,
+        DungeonClickBurst = 5,
+        AutoDungeonTimeCoin = false,
         AutoHalloweenDayReward = false,
         AutoHalloweenShop = false,
         HalloweenShopItem = nil,
-        HalloweenAutoTp = false,
         -- World & Movement Options
         AutoLootBossCoins = false,
         SpeedOn = false,
@@ -633,16 +645,52 @@ xDTaraZ.GameLib.Apis.Activity = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("UI
 xDTaraZ.GameLib.Apis.Online = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("UI.OnlineReward.Model.OnlineState"))
 xDTaraZ.GameLib.Apis.SevenDay = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("UI.7DAY.Model.SevenDayState"))
 
--- Load GearShop & Halloween APIs
+-- Load GearShop, Dungeon & Halloween APIs
 xDTaraZ.GameLib.Apis.GearShop = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("UI.GearShop.Model.GearShopModel"))
-xDTaraZ.GameLib.Apis.GearShopPurchase = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("WuKongHooks.GearShopPurchase"))
-xDTaraZ.GameLib.Apis.GearShopAutoBuy = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("WuKongHooks.GearShopAutoBuy"))
+xDTaraZ.GameLib.Apis.DungeonSession = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("Battle.Game.Dungeon.Session"))
 xDTaraZ.GameLib.Apis.HalloweenState = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("Helper.Halloween.State"))
 xDTaraZ.GameLib.Apis.HalloweenCheckIn = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("Helper.Halloween.CheckInRoll"))
 xDTaraZ.GameLib.Apis.HalloweenDungeon = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("Battle.Game.Dungeon.HalloweenEvent"))
 xDTaraZ.GameLib.Apis.HalloweenInv = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("Battle.Game.Dungeon.HalloweenEventInventory"))
 xDTaraZ.GameLib.Apis.ActiveWheel = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("Helper.ActiveWheel.State"))
 xDTaraZ.GameLib.Apis.ActivityDay = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("Helper.ActivityDayReward.State"))
+
+-- Non-intrusive Outgoing Packet Sniffer (captures live SessionId, Wisp Pos, and Treasure Chest ID)
+do
+    local okHook, _ = pcall(function()
+        if not hookmetamethod or not getnamecallmethod then return end
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if self == EventRE and (method == "FireServer" or method == "fireServer") then
+                local a1, a2, a3 = ...
+                if a1 == "ECS_COMMAND" and a2 == "DungeonCommand" and type(a3) == "table" then
+                    if type(a3.SessionId) == "string" and a3.SessionId ~= "" then
+                        State.DungeonSessionId = a3.SessionId
+                    end
+                    if type(a3.TransitionId) == "string" and a3.TransitionId ~= "" then
+                        State.DungeonTransitionId = a3.TransitionId
+                    end
+                    if type(a3.CoinId) == "number" then
+                        State.DungeonCoinId = a3.CoinId + 1
+                    end
+                elseif a1 == "SetBackpackHeldEntry" and type(a2) == "table" then
+                    if a2.ItemId == "Will-o'-Wisps" and type(a2.Pos) == "number" then
+                        State.WispSlotPos = a2.Pos
+                    end
+                elseif a1 == "HalloweenTreasureRequest" and a2 == "Open" and type(a3) == "number" then
+                    State.TreasureChestId = a3
+                elseif a1 == "BroomFlightRequest" and type(a2) == "table" and type(a2.RequestId) == "number" then
+                    State.BroomRequestId = a2.RequestId + 1
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end)
+    if not okHook then
+        warn("[PromtZo Hub] hookmetamethod sniffer unavailable, using fallback scanners")
+    end
+end
 
 function xDTaraZ.Data.Snapshot()
     local playerData = xDTaraZ.GameLib.Apis.PlayerData
@@ -1132,7 +1180,6 @@ function xDTaraZ.Shop.ClearGearShop()
             return true
         end
 
-        -- 1. Try via GearShopModel API if exposed
         if type(gearModel) == "table" then
             local stateData = nil
             pcall(function()
@@ -1192,7 +1239,6 @@ function xDTaraZ.Shop.ClearGearShop()
             end
         end
 
-        -- 2. Try via cached Snapshot from GearShopSnapshotEvent
         if boughtCount == 0 and type(State.GearShop) == "table" then
             local snapItems = State.GearShop.Items or State.GearShop.Stock or State.GearShop.Slots or State.GearShop.Catalog or State.GearShop
             if type(snapItems) == "table" then
@@ -1224,7 +1270,6 @@ function xDTaraZ.Shop.ClearGearShop()
             end
         end
 
-        -- 3. Fallback: Iterate known GearItemNames if no snapshot structure matched
         if boughtCount == 0 then
             for idx, itemId in ipairs(xDTaraZ.Data.GearItemNames) do
                 if shouldBuyItem(itemId, 0, 1) then
@@ -1249,30 +1294,112 @@ function xDTaraZ.Shop.ClearGearShop()
 end
 
 -- ==========================================
--- Halloween Event 2026 Functions
+-- Halloween Event 2026 Functions (Verified from calls_002138.txt)
 -- ==========================================
+
+-- Check if player is currently inside the Halloween Boss Dungeon (-292, -371, -15048)
+function xDTaraZ.Halloween.IsInDungeon()
+    local hrp = xDTaraZ.Util.GetHRP()
+    if hrp and hrp.Position.Z < -5000 then
+        return true
+    end
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local hud = pg and pg:FindFirstChild("HUDContainer")
+    local dPanel = hud and hud:FindFirstChild("DungeonPanel")
+    if dPanel and dPanel.Visible then
+        return true
+    end
+    return false
+end
+
+-- Try to resolve active Dungeon SessionId from module or GC if not yet sniffed
+function xDTaraZ.Halloween.GetSessionId()
+    if type(State.DungeonSessionId) == "string" and #State.DungeonSessionId == 36 then
+        return State.DungeonSessionId
+    end
+    local dSess = xDTaraZ.GameLib.Apis.DungeonSession
+    if type(dSess) == "table" then
+        for _, v in pairs(dSess) do
+            if type(v) == "string" and #v == 36 and v:match("^%x+%-%x+%-%x+%-%x+%-%x+$") then
+                State.DungeonSessionId = v
+                return v
+            elseif type(v) == "table" and type(v.SessionId) == "string" then
+                State.DungeonSessionId = v.SessionId
+                return v.SessionId
+            end
+        end
+    end
+    if getgc then
+        pcall(function()
+            for _, obj in ipairs(getgc(true)) do
+                if type(obj) == "table" and rawget(obj, "SessionId") and type(obj.SessionId) == "string" then
+                    if #obj.SessionId == 36 then
+                        State.DungeonSessionId = obj.SessionId
+                        break
+                    end
+                end
+            end
+        end)
+    end
+    return State.DungeonSessionId
+end
+
+-- Find backpack slot Pos for "Will-o'-Wisps"
+function xDTaraZ.Halloween.GetWispPos()
+    local bp = xDTaraZ.GameLib.Apis.Backpack
+    if type(bp) == "table" then
+        pcall(function()
+            for k, v in pairs(bp) do
+                if type(v) == "table" then
+                    for idx, item in pairs(v) do
+                        if type(item) == "table" and (item.ItemId == "Will-o'-Wisps" or item.EntryKey == "Item:Will-o'-Wisps") then
+                            State.WispSlotPos = tonumber(item.Pos or item.Slot or idx) or State.WispSlotPos
+                            return
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    return State.WispSlotPos or 7
+end
+
+-- Hold Will-o'-Wisps in Hand (exact call from calls_002138.txt)
+function xDTaraZ.Halloween.HoldWisps()
+    local pos = xDTaraZ.Halloween.GetWispPos()
+    EventRE:FireServer("SetBackpackHeldEntry", {
+        EntryKey = "Item:Will-o'-Wisps",
+        ItemId = "Will-o'-Wisps",
+        Kind = "Item",
+        Pos = pos,
+    })
+    return true
+end
 
 ---@param prompt ProximityPrompt?
 ---@param part BasePart?
 function xDTaraZ.Halloween.TriggerPrompt(prompt, part)
     if not prompt or not prompt.Parent or not prompt.Enabled then return false end
     if not fireproximityprompt then return false end
+    -- Do not teleport out if currently fighting inside Halloween Dungeon
+    if xDTaraZ.Halloween.IsInDungeon() then return false end
+
     local hrp = xDTaraZ.Util.GetHRP()
     local targetPart = part or (prompt.Parent:IsA("BasePart") and prompt.Parent) or prompt.Parent:FindFirstChildWhichIsA("BasePart", true)
     if hrp and targetPart and State.Opt.HalloweenAutoTp then
         local dist = (hrp.Position - targetPart.Position).Magnitude
-        local maxDist = (prompt.MaxActivationDistance or 10) + 2
+        local maxDist = (prompt.MaxActivationDistance or 10) + 1.5
         if dist > maxDist then
             local oldCFrame = hrp.CFrame
             if workspace.StreamingEnabled then
                 pcall(function() LocalPlayer:RequestStreamAroundAsync(targetPart.Position) end)
             end
             hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.CFrame = CFrame.new(targetPart.Position + Vector3.new(0, 4, 0))
-            task.wait(0.18)
+            hrp.CFrame = CFrame.new(targetPart.Position + Vector3.new(0, 3.5, 0))
+            task.wait(0.25)
             pcall(fireproximityprompt, prompt)
-            task.wait(0.1)
-            if hrp.Parent then
+            task.wait(0.2)
+            if hrp.Parent and not xDTaraZ.Halloween.IsInDungeon() then
                 hrp.AssemblyLinearVelocity = Vector3.zero
                 hrp.CFrame = oldCFrame
             end
@@ -1285,8 +1412,180 @@ function xDTaraZ.Halloween.TriggerPrompt(prompt, part)
     return true
 end
 
--- 1. Halloween Check-In (Knock Door)
+-- 1. Open Pumpkin Chest (Treasure) -> RemoteEvent:FireServer("HalloweenTreasureRequest", "Open", id)
+function xDTaraZ.Halloween.OpenChest()
+    if xDTaraZ.Halloween.IsInDungeon() then return false end
+    return xDTaraZ.Util.Action("HalloweenChest", function()
+        local treasure = workspace:FindFirstChild("Treasure")
+        local rootPart = treasure and (treasure:FindFirstChild("RootPart") or treasure.PrimaryPart or treasure:FindFirstChildWhichIsA("BasePart", true))
+        local prompt = treasure and treasure:FindFirstChildWhichIsA("ProximityPrompt", true)
+
+        -- Check if Treasure has a dynamic ID attribute
+        if treasure then
+            local attrId = treasure:GetAttribute("TreasureId") or treasure:GetAttribute("ChestId") or treasure:GetAttribute("EntityId") or treasure:GetAttribute("Id")
+            if type(attrId) == "number" then
+                State.TreasureChestId = attrId
+            end
+        end
+
+        -- Fire exact packet from calls_002138.txt: RemoteEvent:FireServer("HalloweenTreasureRequest", "Open", 12)
+        EventRE:FireServer("HalloweenTreasureRequest", "Open", State.TreasureChestId or 12)
+
+        if prompt then
+            xDTaraZ.Halloween.TriggerPrompt(prompt, rootPart)
+        end
+        State.Metrics.HalloweenActions += 1
+        xDTaraZ.Util.PushStatus("Halloween", "Opened Pumpkin Chest (#" .. tostring(State.TreasureChestId or 12) .. ")")
+        return true
+    end)
+end
+
+-- 2. Submit Will-o'-Wisps at HalloweenDungeonEntrance
+function xDTaraZ.Halloween.SubmitWisps()
+    if xDTaraZ.Halloween.IsInDungeon() then return false end
+    return xDTaraZ.Util.Action("HalloweenWisps", function()
+        local entrance = workspace:FindFirstChild("HalloweenDungeonEntrance")
+        if not entrance then return false end
+        local prompt = entrance:FindFirstChildWhichIsA("ProximityPrompt", true)
+        local hrp = xDTaraZ.Util.GetHRP()
+
+        -- Hold Will-o'-Wisps first (exact sequence from calls_002138.txt)
+        xDTaraZ.Halloween.HoldWisps()
+        task.wait(0.08)
+
+        if hrp and State.Opt.HalloweenAutoTp and (hrp.Position - entrance.Position).Magnitude > 12 then
+            local oldCFrame = hrp.CFrame
+            if workspace.StreamingEnabled then
+                pcall(function() LocalPlayer:RequestStreamAroundAsync(entrance.Position) end)
+            end
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.CFrame = CFrame.new(entrance.Position + Vector3.new(0, 3.5, 0))
+            task.wait(0.25)
+            for _ = 1, 5 do
+                if not State.Alive or xDTaraZ.Halloween.IsInDungeon() then break end
+                xDTaraZ.Halloween.HoldWisps()
+                if prompt and fireproximityprompt then
+                    pcall(fireproximityprompt, prompt)
+                end
+                task.wait(0.15)
+            end
+            if hrp.Parent and not xDTaraZ.Halloween.IsInDungeon() then
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.CFrame = oldCFrame
+            end
+        else
+            for _ = 1, 4 do
+                xDTaraZ.Halloween.HoldWisps()
+                if prompt and fireproximityprompt then
+                    pcall(fireproximityprompt, prompt)
+                end
+                task.wait(0.12)
+            end
+        end
+
+        State.Metrics.HalloweenActions += 1
+        xDTaraZ.Util.PushStatus("Halloween", "Submitted Will-o'-Wisps")
+        return true
+    end)
+end
+
+-- 3. Dungeon Auto Start (TransitionFinished + Start)
+function xDTaraZ.Halloween.StartDungeon()
+    local sessionId = xDTaraZ.Halloween.GetSessionId()
+    if State.DungeonTransitionId then
+        xDTaraZ.Util.FireEcs("DungeonCommand", {
+            Action = "TransitionFinished",
+            TransitionId = State.DungeonTransitionId,
+        })
+    end
+    if sessionId then
+        xDTaraZ.Util.FireEcs("DungeonCommand", {
+            Action = "Start",
+            SessionId = sessionId,
+        })
+    end
+    -- Also click StartBtn if visible in PlayerGui
+    pcall(function()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local startBtn = pg and pg:FindFirstChild("HUDContainer") and pg.HUDContainer:FindFirstChild("DungeonPanel") and pg.HUDContainer.DungeonPanel:FindFirstChild("StartBtn")
+        if startBtn and startBtn.Visible and firesignal then
+            firesignal(startBtn.MouseButton1Click)
+            firesignal(startBtn.Activated)
+        end
+    end)
+    return true
+end
+
+-- 4. Dungeon Auto ClickBoost (ECS_COMMAND -> DungeonCommand -> Action = "Click")
+function xDTaraZ.Halloween.DungeonClick()
+    if not xDTaraZ.Halloween.IsInDungeon() and not State.DungeonSessionId then return false end
+    local sessionId = xDTaraZ.Halloween.GetSessionId()
+    if not sessionId then return false end
+    local burst = State.Opt.DungeonClickBurst or 5
+    for _ = 1, burst do
+        if not State.Alive then break end
+        EventRE:FireServer("ECS_COMMAND", "DungeonCommand", {
+            Action = "Click",
+            SessionId = sessionId,
+        })
+        State.Metrics.DungeonClicks += 1
+    end
+    xDTaraZ.Util.PushStatus("Dungeon", string.format("Dungeon ClickBoost (%d)", State.Metrics.DungeonClicks))
+    return true
+end
+
+-- 5. Dungeon Auto PlaceTimeCoin (ECS_COMMAND -> DungeonCommand -> Action = "PlaceTimeCoin")
+function xDTaraZ.Halloween.PlaceTimeCoin()
+    if not xDTaraZ.Halloween.IsInDungeon() then return false end
+    local sessionId = xDTaraZ.Halloween.GetSessionId()
+    if not sessionId then return false end
+
+    -- Always hold Will-o'-Wisps before placing TimeCoin (as seen in calls_002138.txt at 48.64, 64.49, 67.45, 80.67, 90.20, 117.83, 145.11)
+    xDTaraZ.Halloween.HoldWisps()
+
+    local hrp = xDTaraZ.Util.GetHRP()
+    local pos = hrp and Vector3.new(hrp.Position.X, -370, hrp.Position.Z) or Vector3.new(-341.4628, -370, -14945.4375)
+    local coinId = State.DungeonCoinId or 1
+    State.DungeonCoinId = coinId + 1
+
+    EventRE:FireServer("ECS_COMMAND", "DungeonCommand", {
+        Action = "PlaceTimeCoin",
+        CoinId = coinId,
+        Position = pos,
+        SessionId = sessionId,
+    })
+    State.Metrics.HalloweenActions += 1
+    return true
+end
+
+-- 6. Quit Dungeon
+function xDTaraZ.Halloween.QuitDungeon()
+    local sessionId = xDTaraZ.Halloween.GetSessionId()
+    if not sessionId then return false end
+    EventRE:FireServer("ECS_COMMAND", "DungeonCommand", {
+        Action = "Quit",
+        SessionId = sessionId,
+    })
+    return true
+end
+
+-- 7. Toggle Halloween Broom Flight (BroomFlightRequest)
+function xDTaraZ.Halloween.ToggleBroom(enable)
+    local char = xDTaraZ.Util.GetChar()
+    if not char then return false end
+    local reqId = State.BroomRequestId or 1
+    State.BroomRequestId = reqId + 1
+    EventRE:FireServer("BroomFlightRequest", {
+        Action = enable and "Start" or "Cancel",
+        Character = char,
+        RequestId = reqId,
+    })
+    return true
+end
+
+-- 8. Halloween Check-In (Knock Door)
 function xDTaraZ.Halloween.CheckIn()
+    if xDTaraZ.Halloween.IsInDungeon() then return false end
     return xDTaraZ.Util.Action("HalloweenCheckIn", function()
         local rawAttr = LocalPlayer:GetAttribute("HalloweenActivityData")
         if type(rawAttr) == "string" and rawAttr ~= "" then
@@ -1299,20 +1598,6 @@ function xDTaraZ.Halloween.CheckIn()
             end
         end
 
-        local checkInApi = xDTaraZ.GameLib.Apis.HalloweenCheckIn
-        if type(checkInApi) == "table" then
-            pcall(function()
-                if type(checkInApi.RequestRoll) == "function" then
-                    xDTaraZ.GameLib.Call(checkInApi.RequestRoll, checkInApi)
-                elseif type(checkInApi.Roll) == "function" then
-                    xDTaraZ.GameLib.Call(checkInApi.Roll, checkInApi)
-                elseif type(checkInApi.CheckIn) == "function" then
-                    xDTaraZ.GameLib.Call(checkInApi.CheckIn, checkInApi)
-                end
-            end)
-        end
-
-        xDTaraZ.Util.FireEcs("HalloweenCheckIn", {})
         local checkPart = workspace:FindFirstChild("HalloweenCheckIn")
         local prompt = checkPart and checkPart:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt then
@@ -1324,21 +1609,10 @@ function xDTaraZ.Halloween.CheckIn()
     end)
 end
 
--- 2. Halloween Spin Wheel
+-- 9. Halloween Spin Wheel
 function xDTaraZ.Halloween.SpinWheel()
+    if xDTaraZ.Halloween.IsInDungeon() then return false end
     return xDTaraZ.Util.Action("HalloweenSpin", function()
-        local wheelApi = xDTaraZ.GameLib.Apis.ActiveWheel
-        if type(wheelApi) == "table" then
-            pcall(function()
-                if type(wheelApi.Spin) == "function" then
-                    xDTaraZ.GameLib.Call(wheelApi.Spin, wheelApi)
-                elseif type(wheelApi.RequestSpin) == "function" then
-                    xDTaraZ.GameLib.Call(wheelApi.RequestSpin, wheelApi)
-                end
-            end)
-        end
-
-        xDTaraZ.Util.FireEcs("HalloweenSpinWheel", {})
         local nodeFold = workspace:FindFirstChild("NodeFold")
         local spinPart = nodeFold and nodeFold:FindFirstChild("hallspin")
         local prompt = spinPart and spinPart:FindFirstChildWhichIsA("ProximityPrompt", true)
@@ -1351,49 +1625,9 @@ function xDTaraZ.Halloween.SpinWheel()
     end)
 end
 
--- 3. Open Pumpkin Chest (Treasure)
-function xDTaraZ.Halloween.OpenChest()
-    return xDTaraZ.Util.Action("HalloweenChest", function()
-        local treasure = workspace:FindFirstChild("Treasure")
-        local rootPart = treasure and (treasure:FindFirstChild("RootPart") or treasure.PrimaryPart or treasure:FindFirstChildWhichIsA("BasePart", true))
-        local prompt = treasure and treasure:FindFirstChildWhichIsA("ProximityPrompt", true)
-        if prompt then
-            xDTaraZ.Halloween.TriggerPrompt(prompt, rootPart)
-            xDTaraZ.Util.PushStatus("Halloween", "Opened Pumpkin Chest")
-            return true
-        end
-        return false
-    end)
-end
-
--- 4. Submit Will-o'-Wisps (Halloween Dungeon Entrance)
-function xDTaraZ.Halloween.SubmitWisps()
-    return xDTaraZ.Util.Action("HalloweenWisps", function()
-        local dungeonApi = xDTaraZ.GameLib.Apis.HalloweenDungeon
-        if type(dungeonApi) == "table" then
-            pcall(function()
-                if type(dungeonApi.SubmitWisps) == "function" then
-                    xDTaraZ.GameLib.Call(dungeonApi.SubmitWisps, dungeonApi)
-                elseif type(dungeonApi.Submit) == "function" then
-                    xDTaraZ.GameLib.Call(dungeonApi.Submit, dungeonApi)
-                end
-            end)
-        end
-
-        xDTaraZ.Util.FireEcs("SubmitHalloweenWisps", {})
-        local entrance = workspace:FindFirstChild("HalloweenDungeonEntrance")
-        local prompt = entrance and entrance:FindFirstChildWhichIsA("ProximityPrompt", true)
-        if prompt then
-            xDTaraZ.Halloween.TriggerPrompt(prompt, entrance)
-            xDTaraZ.Util.PushStatus("Halloween", "Submitted Will-o'-Wisps")
-            return true
-        end
-        return false
-    end)
-end
-
--- 5. Claim Halloween Activity Day Reward
+-- 10. Claim Halloween Activity Day Reward
 function xDTaraZ.Halloween.ClaimDayReward()
+    if xDTaraZ.Halloween.IsInDungeon() then return false end
     return xDTaraZ.Util.Action("HalloweenDayReward", function()
         local rawAttr = LocalPlayer:GetAttribute("ActivityData3")
         if type(rawAttr) == "string" and rawAttr ~= "" then
@@ -1408,26 +1642,15 @@ function xDTaraZ.Halloween.ClaimDayReward()
 
         local dayApi = xDTaraZ.GameLib.Apis.ActivityDay
         if type(dayApi) == "table" then
-            local claimed = false
             pcall(function()
                 if type(dayApi.Claim) == "function" then
                     xDTaraZ.GameLib.Call(dayApi.Claim, dayApi)
-                    claimed = true
                 elseif type(dayApi.GetReward) == "function" then
                     xDTaraZ.GameLib.Call(dayApi.GetReward, dayApi)
-                    claimed = true
-                elseif type(dayApi.RequestClaim) == "function" then
-                    xDTaraZ.GameLib.Call(dayApi.RequestClaim, dayApi)
-                    claimed = true
                 end
             end)
-            if claimed then
-                State.Metrics.HalloweenActions += 1
-                return true
-            end
         end
 
-        xDTaraZ.Util.FireEcs("ClaimActivityDayReward", {})
         local nodeFold = workspace:FindFirstChild("NodeFold")
         local dayModel = nodeFold and nodeFold:FindFirstChild("actdayreward")
         local prompt = dayModel and dayModel:FindFirstChildWhichIsA("ProximityPrompt", true)
@@ -1440,7 +1663,7 @@ function xDTaraZ.Halloween.ClaimDayReward()
     end)
 end
 
--- 6. Purchase Halloween Shop Item
+-- 11. Purchase Halloween Shop Item
 function xDTaraZ.Halloween.PurchaseShop(productId)
     return xDTaraZ.Util.Action("HalloweenShop", function()
         local selected = productId or State.Opt.HalloweenShopItem
@@ -1679,7 +1902,6 @@ function xDTaraZ.Teleport.Refresh()
             if target then points["Dungeon " .. entry.Name] = target end
         end
     end
-    -- Halloween Destinations
     local hallCheck = workspace:FindFirstChild("HalloweenCheckIn")
     if hallCheck then points["Halloween: Check-In Door"] = hallCheck end
     local hallDungeon = workspace:FindFirstChild("HalloweenDungeonEntrance")
@@ -1826,6 +2048,7 @@ function xDTaraZ.Collect.ClaimAllOnlineAwards()
     return claimed
 end
 
+-- Updated from calls_002138.txt to include CarryIds = {} and PumpkinGrants = {}
 function xDTaraZ.Collect.ClaimAllAntRewards()
     local room = xDTaraZ.Colony.Room()
     if not room then return false end
@@ -1836,7 +2059,11 @@ function xDTaraZ.Collect.ClaimAllAntRewards()
         end
     end
     if #indices == 0 then return false end
-    return xDTaraZ.Util.FireEcs("ClaimAntReward", { AntIndices = indices })
+    return xDTaraZ.Util.FireEcs("ClaimAntReward", {
+        AntIndices = indices,
+        CarryIds = {},
+        PumpkinGrants = {},
+    })
 end
 
 function xDTaraZ.Collect.ClaimAllWorkerFood()
@@ -1896,6 +2123,20 @@ end
 xDTaraZ:Connect(EventRE.OnClientEvent, function(event, data)
     if not State.Alive then return end
     State.Replies[event] = { At = os.clock(), Payload = data }
+
+    -- Capture SessionId / TransitionId / Treasure Chest ID from incoming server events
+    if type(data) == "table" then
+        if type(data.SessionId) == "string" and #data.SessionId == 36 then
+            State.DungeonSessionId = data.SessionId
+        end
+        if type(data.TransitionId) == "string" and #data.TransitionId == 36 then
+            State.DungeonTransitionId = data.TransitionId
+        end
+        if type(data.TreasureId) == "number" or type(data.ChestId) == "number" then
+            State.TreasureChestId = data.TreasureId or data.ChestId
+        end
+    end
+
     if event == "RollAntResult" and type(data) == "table" and type(data.Results) == "table" then
         State.PendingRolls = {}
         State.Metrics.Rolls += 1
@@ -1933,7 +2174,7 @@ end)
 
 local jobs = {
     { name = "AutoWorkerFood", interval = 0.5, last = 0, run = xDTaraZ.Collect.ClaimAllWorkerFood },
-    { name = "AutoAntRewards", interval = 1.0, last = 0, run = xDTaraZ.Collect.ClaimAllAntRewards },
+    { name = "AutoAntRewards", interval = 0.8, last = 0, run = xDTaraZ.Collect.ClaimAllAntRewards },
     {
         name = "Kaitun",
         interval = 1.0,
@@ -2064,7 +2305,67 @@ local jobs = {
             end
         end,
     },
-    -- Halloween Event Jobs
+    -- Halloween Event Jobs (Updated from calls_002138.txt)
+    {
+        name = "AutoHoldWisps",
+        interval = 2.8,
+        last = 0,
+        run = function()
+            if State.Opt.AutoHoldWisps then
+                xDTaraZ.Halloween.HoldWisps()
+            end
+        end,
+    },
+    {
+        name = "AutoHalloweenChest",
+        interval = 3.5,
+        last = 0,
+        run = function()
+            if State.Opt.AutoHalloweenChest then
+                xDTaraZ.Halloween.OpenChest()
+            end
+        end,
+    },
+    {
+        name = "AutoHalloweenWisps",
+        interval = 2.5,
+        last = 0,
+        run = function()
+            if State.Opt.AutoHalloweenWisps then
+                xDTaraZ.Halloween.SubmitWisps()
+            end
+        end,
+    },
+    {
+        name = "AutoDungeonStart",
+        interval = 2.0,
+        last = 0,
+        run = function()
+            if State.Opt.AutoDungeonStart and xDTaraZ.Halloween.IsInDungeon() then
+                xDTaraZ.Halloween.StartDungeon()
+            end
+        end,
+    },
+    {
+        name = "AutoDungeonClick",
+        interval = 0.2,
+        last = 0,
+        run = function()
+            if State.Opt.AutoDungeonClick then
+                xDTaraZ.Halloween.DungeonClick()
+            end
+        end,
+    },
+    {
+        name = "AutoDungeonTimeCoin",
+        interval = 3.0,
+        last = 0,
+        run = function()
+            if State.Opt.AutoDungeonTimeCoin then
+                xDTaraZ.Halloween.PlaceTimeCoin()
+            end
+        end,
+    },
     {
         name = "AutoHalloweenCheckIn",
         interval = 5.0,
@@ -2082,26 +2383,6 @@ local jobs = {
         run = function()
             if State.Opt.AutoHalloweenSpin then
                 xDTaraZ.Halloween.SpinWheel()
-            end
-        end,
-    },
-    {
-        name = "AutoHalloweenChest",
-        interval = 4.0,
-        last = 0,
-        run = function()
-            if State.Opt.AutoHalloweenChest then
-                xDTaraZ.Halloween.OpenChest()
-            end
-        end,
-    },
-    {
-        name = "AutoHalloweenWisps",
-        interval = 5.0,
-        last = 0,
-        run = function()
-            if State.Opt.AutoHalloweenWisps then
-                xDTaraZ.Halloween.SubmitWisps()
             end
         end,
     },
@@ -2214,7 +2495,7 @@ function xDTaraZ.Scheduler.Stop()
     if State.CodeThread and coroutine.status(State.CodeThread) ~= "dead" then pcall(task.cancel, State.CodeThread) end
     State.CodeThread, State.Redeeming = nil, false
     for key, value in pairs(State.Opt) do
-        if type(value) == "boolean" then State.Opt[key] = false end
+        if type(value) == "boolean" and key ~= "HalloweenAutoTp" then State.Opt[key] = false end
     end
     local current = coroutine.running()
     for _, job in ipairs(jobs) do
@@ -2231,7 +2512,9 @@ function xDTaraZ.Scheduler.Stop()
     xDTaraZ.Esp.Clear()
     xDTaraZ.Util.Later(function()
         for index, option in pairs(Library.Options) do
-            if (type(State.Opt[index]) == "boolean" or index == "KaitunMaster") and option.Value == true then option:SetValue(false) end
+            if index ~= "HalloweenAutoTp" and (type(State.Opt[index]) == "boolean" or index == "KaitunMaster") and option.Value == true then
+                option:SetValue(false)
+            end
         end
     end)
 end
@@ -2249,7 +2532,7 @@ local function BuildInterface()
     Library:OnUnload(xDTaraZ.Unload)
     Library:CreateWindow({
         Title = "PromtZo Hub",
-        SubTitle = "Build An Ant Empire (GearShop + Halloween)",
+        SubTitle = "Build An Ant Empire (Halloween Fixed + GearShop)",
         MenuKey = Enum.KeyCode.LeftControl,
         ConfigFolder = Config.SaveFolder,
         Language = "Auto",
@@ -2257,7 +2540,7 @@ local function BuildInterface()
         OnUnlocked = function()
             local win = Library.Window
             win.Root:SetAttribute("PromtZoGameId", Config.GameId)
-            win.Root:SetAttribute("PromtZoBuild", "2026-11-01.1")
+            win.Root:SetAttribute("PromtZoBuild", "2026-11-01.2")
 
             win:AddTabSection(T("Main", "หน้าหลัก"))
             local mainTab = win:AddTab(T("Main", "หน้าหลัก"), "home", T("Colony overview & Kaitun", "ภาพรวมอาณาจักรและไก่ตัน"))
@@ -2531,7 +2814,6 @@ local function BuildInterface()
                 end,
             })
 
-            -- Gear Shop Auto Clear Groupbox
             local gearGroup = progTab:AddRightGroupbox(T("Gear Shop Auto Clear", "เหมาคลังร้านอุปกรณ์อัตโนมัติ"), "shopping-cart", "OP")
             gearGroup:AddToggle("AutoGearShop", {
                 Text = T("Auto Clear Gear Shop", "ซื้อของเคลียร์ช็อปอัตโนมัติ"),
@@ -2614,22 +2896,51 @@ local function BuildInterface()
             })
 
             -- ==========================================
-            -- Halloween Event Tab (กิจกรรมฮาโลวีน)
+            -- Halloween Event Tab (Fixed from calls_002138.txt)
             -- ==========================================
             win:AddTabSection(T("Events", "กิจกรรมพิเศษ"))
-            local hallTab = win:AddTab(T("Halloween Event", "กิจกรรมฮาโลวีน"), "flame", T("Halloween 2026 automation & rewards", "ระบบอัตโนมัติกิจกรรมฮาโลวีนครบวงจร"))
+            local hallTab = win:AddTab(T("Halloween Event", "กิจกรรมฮาโลวีน"), "flame", T("Halloween 2026 & Dungeon Boss automation", "ระบบกิจกรรมฮาโลวีนและตีบอสดันเจียนอัตโนมัติ"))
 
-            local hallMainGroup = hallTab:AddLeftGroupbox(T("Halloween Activities", "กิจกรรมฮาโลวีนหลัก"), "sparkles", "OP")
+            local hallMainGroup = hallTab:AddLeftGroupbox(T("Halloween World & Chest", "หีบฟักทองและส่งดวงไฟวิญญาณ"), "sparkles", "OP")
             hallMainGroup:AddToggle("HalloweenAutoTp", {
-                Text = T("Auto Teleport When Out of Range", "วาร์ปไปจุดกดอัตโนมัติเมื่ออยู่ไกล"),
-                Default = false,
-                Description = T("Briefly teleports to event prompts if too far away", "วาร์ปไปกด Prompt กิจกรรมแล้วกลับมาจุดเดิมอัตโนมัติ"),
+                Text = T("Auto Teleport to Prompts", "วาร์ปไปจุดกดอัตโนมัติเมื่ออยู่ไกล"),
+                Default = true,
+                Description = T("Teleports to event prompts when out of range (paused in dungeon)", "วาร์ปไปกดจุดกิจกรรมอัตโนมัติและหยุดวาร์ปขณะอยู่ในดันเจียน"),
                 Callback = function(v) State.Opt.HalloweenAutoTp = v end,
+            })
+            hallMainGroup:AddToggle("AutoHalloweenChest", {
+                Text = T("Auto Open Pumpkin Chest", "เปิดหีบฟักทองอัตโนมัติ (HalloweenTreasureRequest)"),
+                Default = false,
+                Description = T("Fires HalloweenTreasureRequest Open & triggers chest prompt", "ยิงแพ็กเก็ตเปิดหีบฟักทองและกดรับอัตโนมัติ"),
+                Callback = function(v) State.Opt.AutoHalloweenChest = v end,
+            })
+            xDTaraZ.Util.Button(hallMainGroup, {
+                Text = T("Open Pumpkin Chest Now", "เปิดหีบฟักทองทันที"),
+                Func = function()
+                    xDTaraZ.Halloween.OpenChest()
+                end,
+            })
+            hallMainGroup:AddToggle("AutoHoldWisps", {
+                Text = T("Auto Hold Will-o'-Wisps", "ถือดวงไฟวิญญาณในมืออัตโนมัติ"),
+                Default = false,
+                Description = T("Keeps Will-o'-Wisps equipped via SetBackpackHeldEntry", "สั่งถือ Will-o'-Wisps ในมือตลอดเวลาเพื่อส่งเข้าดันเจียน"),
+                Callback = function(v) State.Opt.AutoHoldWisps = v end,
+            })
+            hallMainGroup:AddToggle("AutoHalloweenWisps", {
+                Text = T("Auto Submit Will-o'-Wisps", "ส่งดวงไฟวิญญาณเปิดดันเจียนอัตโนมัติ"),
+                Default = false,
+                Description = T("Equips Will-o'-Wisps and submits at HalloweenDungeonEntrance", "ถือดวงไฟวิญญาณและกดส่งที่หน้าประตูดันเจียนอัตโนมัติ"),
+                Callback = function(v) State.Opt.AutoHalloweenWisps = v end,
+            })
+            xDTaraZ.Util.Button(hallMainGroup, {
+                Text = T("Submit Will-o'-Wisps Now", "ส่งดวงไฟวิญญาณทันที"),
+                Func = function()
+                    xDTaraZ.Halloween.SubmitWisps()
+                end,
             })
             hallMainGroup:AddToggle("AutoHalloweenCheckIn", {
                 Text = T("Auto Knock Door (Check-In)", "เคาะประตูฮาโลวีนอัตโนมัติ"),
                 Default = false,
-                Description = T("Knocks on the Halloween Check-In door when ready", "เคาะประตูรับบัฟและของรางวัลฮาโลวีนเมื่อครบกำหนด"),
                 Callback = function(v) State.Opt.AutoHalloweenCheckIn = v end,
             })
             xDTaraZ.Util.Button(hallMainGroup, {
@@ -2641,7 +2952,6 @@ local function BuildInterface()
             hallMainGroup:AddToggle("AutoHalloweenSpin", {
                 Text = T("Auto Spin Halloween Wheel", "หมุนวงล้อฮาโลวีนอัตโนมัติ"),
                 Default = false,
-                Description = T("Spins the Halloween wheel at hallspin continuously", "หมุนวงล้อสุ่มของรางวัลฮาโลวีนอัตโนมัติ"),
                 Callback = function(v) State.Opt.AutoHalloweenSpin = v end,
             })
             xDTaraZ.Util.Button(hallMainGroup, {
@@ -2650,45 +2960,66 @@ local function BuildInterface()
                     xDTaraZ.Halloween.SpinWheel()
                 end,
             })
-            hallMainGroup:AddToggle("AutoHalloweenChest", {
-                Text = T("Auto Open Pumpkin Chest", "เปิดหีบฟักทองอัตโนมัติ"),
+
+            local hallDungeonGroup = hallTab:AddRightGroupbox(T("Halloween Boss Dungeon", "บอสดันเจียนฮาโลวีน (DungeonCommand)"), "swords", "OP")
+            hallDungeonGroup:AddToggle("AutoDungeonStart", {
+                Text = T("Auto Start Dungeon Fight", "กดเริ่มตีบอสดันเจียนอัตโนมัติ"),
                 Default = false,
-                Description = T("Opens the Pumpkin Chest treasure automatically", "กดเปิดหีบสมบัติฟักทองในแมพฮาโลวีนอัตโนมัติ"),
-                Callback = function(v) State.Opt.AutoHalloweenChest = v end,
+                Description = T("Sends DungeonCommand Start when inside boss arena", "สั่งเริ่มสู้บอสอัตโนมัติเมื่อเข้าสู่ห้องบอสฮาโลวีน"),
+                Callback = function(v) State.Opt.AutoDungeonStart = v end,
             })
-            xDTaraZ.Util.Button(hallMainGroup, {
-                Text = T("Open Pumpkin Chest Now", "เปิดหีบฟักทองทันที"),
+            hallDungeonGroup:AddToggle("AutoDungeonClick", {
+                Text = T("Auto Dungeon ClickBoost", "รัวคลิกบัฟตีบอสอัตโนมัติ (Action = Click)"),
+                Default = false,
+                Description = T("Spams DungeonCommand Click to boost ant damage & speed", "รัวคำสั่งคลิกในดันเจียนเพื่อเร่งดาเมจมดแบบไม่ต้องกดเอง"),
+                Callback = function(v) State.Opt.AutoDungeonClick = v end,
+            })
+            hallDungeonGroup:AddSlider("DungeonClickBurst", {
+                Text = T("Clicks Per Tick", "จำนวนคลิกต่อรอบ"),
+                Min = 1,
+                Max = 15,
+                Default = 5,
+                Rounding = 0,
+                Callback = function(v) State.Opt.DungeonClickBurst = v end,
+            })
+            hallDungeonGroup:AddToggle("AutoDungeonTimeCoin", {
+                Text = T("Auto Place TimeCoin in Dungeon", "วางเหรียญเพิ่มเวลาในดันเจียนอัตโนมัติ"),
+                Default = false,
+                Description = T("Sends DungeonCommand PlaceTimeCoin during boss fight", "ส่งคำสั่งวาง TimeCoin เพิ่มเวลาตีบอสอัตโนมัติ"),
+                Callback = function(v) State.Opt.AutoDungeonTimeCoin = v end,
+            })
+            xDTaraZ.Util.Button(hallDungeonGroup, {
+                Text = T("Place TimeCoin Now", "วางเหรียญเวลาทันที"),
                 Func = function()
-                    xDTaraZ.Halloween.OpenChest()
+                    xDTaraZ.Halloween.PlaceTimeCoin()
+                end,
+            })
+            xDTaraZ.Util.Button(hallDungeonGroup, {
+                Text = T("Quit Current Dungeon", "ออกจากดันเจียนทันที"),
+                Func = function()
+                    xDTaraZ.Halloween.QuitDungeon()
                 end,
             })
 
-            local hallDungeonGroup = hallTab:AddRightGroupbox(T("Halloween Dungeon & Shop", "ดันเจียนและร้านค้าฮาโลวีน"), "shopping-bag")
-            hallDungeonGroup:AddToggle("AutoHalloweenWisps", {
-                Text = T("Auto Submit Will-o'-Wisps", "ส่งดวงไฟวิญญาณเข้าดันเจียนอัตโนมัติ"),
-                Default = false,
-                Description = T("Submits Will-o'-Wisps at HalloweenDungeonEntrance", "ส่งดวงไฟวิญญาณเพื่อเปิดประตูดันเจียนฮาโลวีนอัตโนมัติ"),
-                Callback = function(v) State.Opt.AutoHalloweenWisps = v end,
-            })
-            xDTaraZ.Util.Button(hallDungeonGroup, {
-                Text = T("Submit Will-o'-Wisps Now", "ส่งดวงไฟวิญญาณทันที"),
+            local hallShopGroup = hallTab:AddRightGroupbox(T("Halloween Shop & Broom", "ร้านค้าฮาโลวีนและไม้กวาด"), "shopping-bag")
+            xDTaraZ.Util.Button(hallShopGroup, {
+                Text = T("Start Broom Flight", "ขี่ไม้กวาดฮาโลวีน (Broom Start)"),
                 Func = function()
-                    xDTaraZ.Halloween.SubmitWisps()
+                    xDTaraZ.Halloween.ToggleBroom(true)
                 end,
             })
-            hallDungeonGroup:AddToggle("AutoHalloweenDayReward", {
+            xDTaraZ.Util.Button(hallShopGroup, {
+                Text = T("Cancel Broom Flight", "ลงจากไม้กวาด (Broom Cancel)"),
+                Func = function()
+                    xDTaraZ.Halloween.ToggleBroom(false)
+                end,
+            })
+            hallShopGroup:AddToggle("AutoHalloweenDayReward", {
                 Text = T("Auto Claim Event Daily Reward", "รับรางวัลรายวันกิจกรรมอัตโนมัติ"),
                 Default = false,
-                Description = T("Claims daily Halloween activity reward when ready", "กดรับรางวัลรายวันจากแท่นกิจกรรมฮาโลวีน"),
                 Callback = function(v) State.Opt.AutoHalloweenDayReward = v end,
             })
-            xDTaraZ.Util.Button(hallDungeonGroup, {
-                Text = T("Claim Event Daily Reward Now", "รับรางวัลรายวันกิจกรรมทันที"),
-                Func = function()
-                    xDTaraZ.Halloween.ClaimDayReward()
-                end,
-            })
-            hallDungeonGroup:AddDropdown("HalloweenShopItem", {
+            hallShopGroup:AddDropdown("HalloweenShopItem", {
                 Text = T("Halloween Shop Item", "สินค้าฮาโลวีน"),
                 Values = xDTaraZ.Data.HalloweenShopLabels,
                 Searchable = true,
@@ -2696,13 +3027,12 @@ local function BuildInterface()
                     State.Opt.HalloweenShopItem = xDTaraZ.Data.HalloweenShopIds[v] or v
                 end,
             })
-            hallDungeonGroup:AddToggle("AutoHalloweenShop", {
+            hallShopGroup:AddToggle("AutoHalloweenShop", {
                 Text = T("Auto Buy Halloween Shop", "ซื้อร้านค้าฮาโลวีนอัตโนมัติ"),
                 Default = false,
-                Description = T("Purchases selected item from Halloween activity shop", "ซื้อไอเทมที่เลือกจากร้านค้าฮาโลวีนอัตโนมัติ"),
                 Callback = function(v) State.Opt.AutoHalloweenShop = v end,
             })
-            xDTaraZ.Util.Button(hallDungeonGroup, {
+            xDTaraZ.Util.Button(hallShopGroup, {
                 Text = T("Buy Halloween Item Now", "ซื้อสินค้าฮาโลวีนทันที"),
                 Func = function()
                     xDTaraZ.Halloween.PurchaseShop(State.Opt.HalloweenShopItem)
@@ -2953,8 +3283,8 @@ local function BuildInterface()
                         local txt = string.format("Room: %s  |  Nest Layer: %s  |  Ant Slots: %s  |  Carried Food: %s  |  Price: %s Gold",
                             tostring(roomIdx), tostring(nestLayer), tostring(maxSlots), tostring(carriedFood), tostring(State.FoodPrice))
                         local snapshot = xDTaraZ.Data.Snapshot()
-                        txt = txt .. string.format("\nCash: %.0f | Food: %.0f | Sales: %d | Claims: %d | Gear Bought: %d | Halloween: %d\n%s",
-                            snapshot.Gold, snapshot.Food, State.Metrics.Sales, State.Metrics.Claims, State.Metrics.GearBought, State.Metrics.HalloweenActions, xDTaraZ.Util.StatusText())
+                        txt = txt .. string.format("\nCash: %.0f | Food: %.0f | Gear: %d | Halloween: %d | Dungeon Clicks: %d\n%s",
+                            snapshot.Gold, snapshot.Food, State.Metrics.GearBought, State.Metrics.HalloweenActions, State.Metrics.DungeonClicks, xDTaraZ.Util.StatusText())
                         xDTaraZ.Util.Later(function() statusPara:SetText(txt) end)
                     end)
                     task.wait(Config.StatusInterval)
