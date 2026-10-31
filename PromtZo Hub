@@ -41,7 +41,7 @@ function PromtZoBanner.Show()
  |_|   |_| \_\\___/|_|  |_| |_| /____| \___/  |_| |_|\___/|____/ 
 ]],
         rule,
-        "   BUILD AN ANT EMPIRE  //  PromtZo Hub (Halloween Fixed)",
+        "   BUILD AN ANT EMPIRE  //  PromtZo Hub v2.0 (Modern UI Edition)",
         "   executor: " .. executor .. "   //   player: " .. game:GetService("Players").LocalPlayer.Name,
         rule,
     }, "\n"))
@@ -86,6 +86,8 @@ local StarterGui = game:GetService("StarterGui")
 local Lighting = game:GetService("Lighting")
 local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -100,10 +102,9 @@ xDTaraZ.Config = {
     Discord = "https://discord.gg/FHVfmeSceA",
     GameId = 10436530264,
     PlaceId = 78490532994307,
-    UiSource = "https://raw.githubusercontent.com/xDTaraZz/Roblox-Scripts/refs/heads/main/ui.lua",
     UpdateLog = {
-        { "2026-11-01", "Fixed Halloween packets from live call logs\nAdded HalloweenTreasureRequest & SetBackpackHeldEntry (Will-o'-Wisps)\nAdded DungeonCommand Auto Clicker, Auto Start & Auto PlaceTimeCoin\nUpdated ClaimAntReward with PumpkinGrants support" },
-        { "2026-10-31", "Rebranded to PromtZo Hub\nAdded Auto Clear Gear Shop (Potions & Crystals)\nAdded Halloween 2026 Event automation" },
+        { "2026-11-01 (v2.0)", "Upgraded to PromtZo Modern Cyber-Glass UI\nAdded Floating Toggle Pill, Search Bar & Theme Switcher\nFixed Halloween Chest, Will-o'-Wisps & Dungeon Boss ClickBoost\nAdded Auto Clear Gear Shop (Potions & Crystals)" },
+        { "2026-10-15", "Added Build An Ant Empire support\nKaitun, food farming and auto sell\nAuto roll, rarity filters and best ants\nPool and stat upgrades with a cash reserve" },
     },
     LoadTimeout = 10,
     RemoteTimeout = 8,
@@ -111,7 +112,7 @@ xDTaraZ.Config = {
     AlertTries = 12,
     AlertDelay = 0.5,
     TickDelay = 0.08,
-    StatusInterval = 1.2,
+    StatusInterval = 1.0,
     PumpInterval = 0.2,
     ReplyTimeout = 4,
     RollSlack = 0.08,
@@ -157,7 +158,6 @@ xDTaraZ.State = {
     BossActive = false,
     SeenCodes = {},
     CodeResults = {},
-    -- Live Captured Halloween & Dungeon State
     DungeonSessionId = nil,
     DungeonTransitionId = nil,
     DungeonCoinId = 1,
@@ -189,11 +189,9 @@ xDTaraZ.State = {
         AutoCompostUpgrade = false,
         AutoOnlineAward = false,
         AutoActivity = false,
-        -- Gear Shop Auto Clear Options
         AutoGearShop = false,
         GearShopInterval = 5.0,
         GearFilter = {},
-        -- Halloween Event Options
         HalloweenAutoTp = true,
         AutoHalloweenCheckIn = false,
         AutoHalloweenSpin = false,
@@ -207,7 +205,6 @@ xDTaraZ.State = {
         AutoHalloweenDayReward = false,
         AutoHalloweenShop = false,
         HalloweenShopItem = nil,
-        -- World & Movement Options
         AutoLootBossCoins = false,
         SpeedOn = false,
         WalkSpeed = 200,
@@ -420,19 +417,6 @@ function xDTaraZ.Util.ActivityIcons()
         dropdown.Thumb.ImageRectOffset = sprite.ImageRectOffset or Vector2.zero
         dropdown.Thumb.ImageRectSize = sprite.ImageRectSize or Vector2.zero
     end
-    if dropdown.List == State.ActivityPopup then return end
-    State.ActivityPopup = dropdown.List
-    if not dropdown.List or not Library.Window or not Library.Window.Root.Parent then return end
-    for _, image in ipairs(Library.Window.Root.Parent:QueryDescendants("ImageLabel")) do
-        if image.Name == "Thumb" and image.Parent:IsA("TextButton") then
-            local label = image.Parent:FindFirstChildWhichIsA("TextLabel")
-            local entry = label and sprites[label.Text]
-            if entry then
-                image.ImageRectOffset = entry.ImageRectOffset or Vector2.zero
-                image.ImageRectSize = entry.ImageRectSize or Vector2.zero
-            end
-        end
-    end
 end
 
 function xDTaraZ.Util.Await(check, timeout)
@@ -495,30 +479,6 @@ function xDTaraZ.Util.Button(group, info)
     return button
 end
 
----@param url string
----@return string?, string?
-function xDTaraZ.Util.HttpGet(url)
-    local ok, body = xDTaraZ.Util.Bounded(function()
-        return game:HttpGet(url)
-    end, Config.RemoteTimeout)
-    if ok and type(body) == "string" and #body > 100 then
-        return body, nil
-    end
-
-    local send = request or http_request or (syn and syn.request) or (http and http.request)
-    if not send then
-        return nil, tostring(body)
-    end
-    local sent, response = xDTaraZ.Util.Bounded(send, Config.RemoteTimeout, { Url = url, Method = "GET" })
-    if not sent then
-        return nil, tostring(response)
-    end
-    if type(response) ~= "table" or response.StatusCode ~= 200 or type(response.Body) ~= "string" then
-        return nil, "HTTP " .. tostring(type(response) == "table" and response.StatusCode)
-    end
-    return response.Body, nil
-end
-
 ---@param text string
 ---@param detail string?
 function xDTaraZ.Util.Alert(text, detail)
@@ -536,24 +496,1456 @@ function xDTaraZ.Util.Alert(text, detail)
     end)
 end
 
----@return table?
+-- ============================================================================
+-- PROMTZO MODERN CYBER-GLASS UI ENGINE v2.0 (Self-Contained, Smooth & Sleek)
+-- ============================================================================
 function xDTaraZ.Util.LoadLibrary()
-    local body, err = xDTaraZ.Util.HttpGet(Config.UiSource)
-    if not body or not body:sub(-64):find("return Library%s*$") then
-        xDTaraZ.Util.Alert("Could not download menu. Check network connection.", err or "truncated body")
-        return nil
+    local Themes = {
+        ["Cyber Violet"] = {
+            Accent = Color3.fromRGB(139, 92, 246),
+            AccentGlow = Color3.fromRGB(167, 139, 250),
+            Secondary = Color3.fromRGB(6, 182, 212),
+            BgMain = Color3.fromRGB(13, 14, 21),
+            BgSidebar = Color3.fromRGB(18, 19, 29),
+            BgCard = Color3.fromRGB(23, 25, 38),
+            BgElem = Color3.fromRGB(30, 33, 50),
+            Stroke = Color3.fromRGB(48, 52, 78),
+            Text = Color3.fromRGB(243, 244, 246),
+            SubText = Color3.fromRGB(156, 163, 175),
+        },
+        ["Halloween Pumpkin"] = {
+            Accent = Color3.fromRGB(249, 115, 22),
+            AccentGlow = Color3.fromRGB(251, 146, 60),
+            Secondary = Color3.fromRGB(168, 85, 247),
+            BgMain = Color3.fromRGB(16, 12, 18),
+            BgSidebar = Color3.fromRGB(22, 16, 25),
+            BgCard = Color3.fromRGB(29, 21, 34),
+            BgElem = Color3.fromRGB(39, 28, 46),
+            Stroke = Color3.fromRGB(68, 44, 74),
+            Text = Color3.fromRGB(255, 247, 237),
+            SubText = Color3.fromRGB(186, 164, 180),
+        },
+        ["Emerald Matrix"] = {
+            Accent = Color3.fromRGB(16, 185, 129),
+            AccentGlow = Color3.fromRGB(52, 211, 153),
+            Secondary = Color3.fromRGB(20, 184, 166),
+            BgMain = Color3.fromRGB(11, 17, 16),
+            BgSidebar = Color3.fromRGB(15, 23, 22),
+            BgCard = Color3.fromRGB(20, 31, 29),
+            BgElem = Color3.fromRGB(27, 42, 39),
+            Stroke = Color3.fromRGB(42, 68, 62),
+            Text = Color3.fromRGB(236, 253, 245),
+            SubText = Color3.fromRGB(148, 184, 171),
+        },
+        ["Ocean Cyan"] = {
+            Accent = Color3.fromRGB(14, 165, 233),
+            AccentGlow = Color3.fromRGB(56, 189, 248),
+            Secondary = Color3.fromRGB(99, 102, 241),
+            BgMain = Color3.fromRGB(11, 15, 23),
+            BgSidebar = Color3.fromRGB(15, 21, 32),
+            BgCard = Color3.fromRGB(20, 28, 43),
+            BgElem = Color3.fromRGB(28, 39, 59),
+            Stroke = Color3.fromRGB(45, 62, 92),
+            Text = Color3.fromRGB(240, 249, 255),
+            SubText = Color3.fromRGB(148, 163, 184),
+        },
+    }
+
+    local IconMap = {
+        ["home"] = "🏠",
+        ["activity"] = "📊",
+        ["bot"] = "🤖",
+        ["link"] = "🔗",
+        ["bell"] = "🔔",
+        ["star"] = "⭐",
+        ["leaf"] = "🍃",
+        ["coins"] = "💰",
+        ["recycle"] = "♻️",
+        ["sparkles"] = "✨",
+        ["users"] = "🐜",
+        ["trending-up"] = "📈",
+        ["arrow-up-circle"] = "⬆️",
+        ["shield"] = "🛡️",
+        ["shopping-cart"] = "🛒",
+        ["shopping-bag"] = "🛍️",
+        ["gift"] = "🎁",
+        ["flame"] = "🎃",
+        ["swords"] = "⚔️",
+        ["map-pin"] = "📍",
+        ["eye"] = "👁️",
+        ["sliders"] = "⚙️",
+        ["user"] = "🏃",
+        ["zap"] = "⚡",
+        ["wind"] = "🕊️",
+        ["rotate-ccw"] = "🔄",
+    }
+
+    local Lib = {
+        Options = {},
+        ThemeName = "Cyber Violet",
+        Theme = Themes["Cyber Violet"],
+        Lang = "TH",
+        MenuKey = Enum.KeyCode.LeftControl,
+        UnloadCallbacks = {},
+        ThemeListeners = {},
+        LangListeners = {},
+        Searchables = {},
+        UiConns = {},
+        Alive = true,
+        Compat = {
+            Has = function(cap)
+                if cap == "Prompt" then return fireproximityprompt ~= nil end
+                return true
+            end,
+            NeedCap = function() end,
+            Block = function(opt, reason)
+                if opt and opt.SetBlocked then opt:SetBlocked(reason) end
+            end,
+        },
+    }
+
+    local function Tween(inst, duration, props, style, dir)
+        if not inst or not inst.Parent then return end
+        local ti = TweenInfo.new(duration or 0.2, style or Enum.EasingStyle.Quart, dir or Enum.EasingDirection.Out)
+        local tw = TweenService:Create(inst, ti, props)
+        tw:Play()
+        return tw
     end
-    local chunk, compileErr = loadstring(body)
-    if not chunk then
-        xDTaraZ.Util.Alert("The menu failed to load on this executor: " .. tostring(compileErr))
-        return nil
+
+    local function Corner(parent, radius)
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, radius or 8)
+        c.Parent = parent
+        return c
     end
-    local ok, library = pcall(chunk)
-    if not ok or type(library) ~= "table" then
-        xDTaraZ.Util.Alert("The menu failed to initialize: " .. tostring(library))
-        return nil
+
+    local function Stroke(parent, colorKey, thickness, transparency)
+        local s = Instance.new("UIStroke")
+        s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        s.Thickness = thickness or 1
+        s.Transparency = transparency or 0.25
+        s.Color = type(colorKey) == "string" and Lib.Theme[colorKey] or (colorKey or Lib.Theme.Stroke)
+        s.Parent = parent
+        if type(colorKey) == "string" then
+            table.insert(Lib.ThemeListeners, function(t)
+                if s.Parent then s.Color = t[colorKey] end
+            end)
+        end
+        return s
     end
-    return library
+
+    local function BindTheme(inst, prop, key)
+        inst[prop] = Lib.Theme[key]
+        table.insert(Lib.ThemeListeners, function(t)
+            if inst.Parent then Tween(inst, 0.2, { [prop] = t[key] }) end
+        end)
+    end
+
+    local function MakeDraggable(dragHandle, targetFrame)
+        local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+        table.insert(Lib.UiConns, dragHandle.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+                dragStart = input.Position
+                startPos = targetFrame.Position
+                input.Changed:Connect(function()
+                    if input.UserInputState == Enum.UserInputState.End then
+                        dragging = false
+                    end
+                end)
+            end
+        end))
+        table.insert(Lib.UiConns, dragHandle.InputChanged:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+                dragInput = input
+            end
+        end))
+        table.insert(Lib.UiConns, UserInputService.InputChanged:Connect(function(input)
+            if input == dragInput and dragging and dragStart and startPos then
+                local delta = input.Position - dragStart
+                targetFrame.Position = UDim2.new(
+                    startPos.X.Scale, startPos.X.Offset + delta.X,
+                    startPos.Y.Scale, startPos.Y.Offset + delta.Y
+                )
+            end
+        end))
+    end
+
+    function Lib:T(en, th)
+        return setmetatable({ en = tostring(en or ""), th = tostring(th or en or "") }, {
+            __tostring = function(self)
+                return Lib.Lang == "TH" and self.th or self.en
+            end,
+            __concat = function(a, b)
+                return tostring(a) .. tostring(b)
+            end,
+        })
+    end
+
+    local function ResolveText(val)
+        if type(val) == "table" and val.en then
+            return Lib.Lang == "TH" and val.th or val.en
+        end
+        return tostring(val or "")
+    end
+
+    local function BindText(label, val, prefix)
+        local pre = prefix or ""
+        label.Text = pre .. ResolveText(val)
+        if type(val) == "table" and val.en then
+            table.insert(Lib.LangListeners, function()
+                if label.Parent then label.Text = pre .. ResolveText(val) end
+            end)
+        end
+    end
+
+    function Lib:SetTheme(name)
+        local nextTheme = Themes[name]
+        if not nextTheme then return end
+        Lib.ThemeName = name
+        Lib.Theme = nextTheme
+        for _, fn in ipairs(Lib.ThemeListeners) do
+            pcall(fn, nextTheme)
+        end
+    end
+
+    function Lib:SetLanguage(lang)
+        Lib.Lang = (lang == "EN") and "EN" or "TH"
+        for _, fn in ipairs(Lib.LangListeners) do
+            pcall(fn)
+        end
+    end
+
+    function Lib:OnUnload(fn)
+        table.insert(Lib.UnloadCallbacks, fn)
+    end
+
+    function Lib:Unload()
+        if not Lib.Alive then return end
+        Lib.Alive = false
+        for _, conn in ipairs(Lib.UiConns) do
+            pcall(function() conn:Disconnect() end)
+        end
+        table.clear(Lib.UiConns)
+        for _, fn in ipairs(Lib.UnloadCallbacks) do
+            pcall(fn)
+        end
+        if Lib.ScreenGui and Lib.ScreenGui.Parent then
+            pcall(function() Lib.ScreenGui:Destroy() end)
+        end
+    end
+
+    function Lib:Every(interval, fn)
+        task.spawn(function()
+            while Lib.Alive do
+                pcall(fn)
+                task.wait(interval or 0.2)
+            end
+        end)
+    end
+
+    function Lib:SaveConfig()
+        pcall(function()
+            if not writefile then return end
+            local folder = Lib.ConfigFolder or "PromtZoHub"
+            if isfolder and makefolder and not isfolder(folder) then
+                makefolder(folder)
+            end
+            local data = { Theme = Lib.ThemeName, Lang = Lib.Lang, Options = {} }
+            for k, opt in pairs(Lib.Options) do
+                if opt.Value ~= nil then
+                    data.Options[k] = opt.Value
+                end
+            end
+            writefile(folder .. "/autoload.json", HttpService:JSONEncode(data))
+            Lib:Notify("PromtZo Hub", Lib.Lang == "TH" and "บันทึกการตั้งค่าเรียบร้อยแล้ว" or "Configuration saved!", 3, "Success")
+        end)
+    end
+
+    function Lib:LoadAutoloadConfig()
+        pcall(function()
+            if not readfile or not isfile then return end
+            local path = (Lib.ConfigFolder or "PromtZoHub") .. "/autoload.json"
+            if not isfile(path) then return end
+            local raw = readfile(path)
+            local decoded = HttpService:JSONDecode(raw)
+            if type(decoded) ~= "table" then return end
+            if decoded.Theme and Themes[decoded.Theme] then Lib:SetTheme(decoded.Theme) end
+            if decoded.Lang then Lib:SetLanguage(decoded.Lang) end
+            if type(decoded.Options) == "table" then
+                for k, v in pairs(decoded.Options) do
+                    if Lib.Options[k] and Lib.Options[k].SetValue then
+                        pcall(function() Lib.Options[k]:SetValue(v) end)
+                    end
+                end
+            end
+        end)
+    end
+
+    function Lib:Notify(title, text, duration, kind)
+        if not Lib.ToastHolder then return end
+        local dur = tonumber(duration) or 4
+        local accentColor = Lib.Theme.Accent
+        local iconTxt = "✨"
+        if kind == "Error" then
+            accentColor = Color3.fromRGB(239, 68, 68)
+            iconTxt = "⚠️"
+        elseif kind == "Success" then
+            accentColor = Color3.fromRGB(16, 185, 129)
+            iconTxt = "✅"
+        end
+
+        local card = Instance.new("Frame")
+        card.Size = UDim2.new(1, 0, 0, 62)
+        card.BackgroundColor3 = Lib.Theme.BgCard
+        card.BackgroundTransparency = 0.06
+        card.Position = UDim2.new(1, 40, 0, 0)
+        card.Parent = Lib.ToastHolder
+        Corner(card, 10)
+        Stroke(card, accentColor, 1.2, 0.2)
+
+        local bar = Instance.new("Frame")
+        bar.Size = UDim2.new(0, 4, 1, -12)
+        bar.Position = UDim2.new(0, 6, 0, 6)
+        bar.BackgroundColor3 = accentColor
+        bar.BorderSizePixel = 0
+        bar.Parent = card
+        Corner(bar, 4)
+
+        local titleLbl = Instance.new("TextLabel")
+        titleLbl.Size = UDim2.new(1, -28, 0, 20)
+        titleLbl.Position = UDim2.new(0, 18, 0, 8)
+        titleLbl.BackgroundTransparency = 1
+        titleLbl.Font = Enum.Font.GothamBold
+        titleLbl.TextSize = 13
+        titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+        titleLbl.TextColor3 = Lib.Theme.Text
+        titleLbl.Text = iconTxt .. "  " .. ResolveText(title)
+        titleLbl.Parent = card
+
+        local msgLbl = Instance.new("TextLabel")
+        msgLbl.Size = UDim2.new(1, -28, 0, 28)
+        msgLbl.Position = UDim2.new(0, 18, 0, 28)
+        msgLbl.BackgroundTransparency = 1
+        msgLbl.Font = Enum.Font.Gotham
+        msgLbl.TextSize = 12
+        msgLbl.TextWrapped = true
+        msgLbl.TextXAlignment = Enum.TextXAlignment.Left
+        msgLbl.TextYAlignment = Enum.TextYAlignment.Top
+        msgLbl.TextColor3 = Lib.Theme.SubText
+        msgLbl.Text = ResolveText(text)
+        msgLbl.Parent = card
+
+        Tween(card, 0.28, { Position = UDim2.new(0, 0, 0, 0) }, Enum.EasingStyle.Back)
+        task.delay(dur, function()
+            if card and card.Parent then
+                Tween(card, 0.22, { BackgroundTransparency = 1 })
+                task.wait(0.24)
+                if card.Parent then card:Destroy() end
+            end
+        end)
+    end
+
+    function Lib:CreateWindow(cfg)
+        Lib.ConfigFolder = cfg.ConfigFolder or "PromtZoHub"
+        Lib.MenuKey = cfg.MenuKey or Enum.KeyCode.LeftControl
+
+        local parentGui = nil
+        pcall(function()
+            if gethui then parentGui = gethui() end
+        end)
+        if not parentGui then
+            local okCore = pcall(function() return CoreGui.Name end)
+            parentGui = okCore and CoreGui or LocalPlayer:WaitForChild("PlayerGui")
+        end
+
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "PromtZoHub_ModernUI"
+        screenGui.ResetOnSpawn = false
+        screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        screenGui.IgnoreGuiInset = true
+        screenGui.Parent = parentGui
+        Lib.ScreenGui = screenGui
+
+        -- Toast Notification Container
+        local toastHolder = Instance.new("Frame")
+        toastHolder.Name = "Toasts"
+        toastHolder.Size = UDim2.new(0, 290, 1, -30)
+        toastHolder.Position = UDim2.new(1, -306, 0, 15)
+        toastHolder.BackgroundTransparency = 1
+        toastHolder.Parent = screenGui
+        local toastLayout = Instance.new("UIListLayout")
+        toastLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        toastLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+        toastLayout.Padding = UDim.new(0, 8)
+        toastLayout.Parent = toastHolder
+        Lib.ToastHolder = toastHolder
+
+        -- Floating Toggle Pill (Draggable, works on Mobile & PC)
+        local floatBtn = Instance.new("TextButton")
+        floatBtn.Name = "FloatingToggle"
+        floatBtn.Size = UDim2.new(0, 132, 0, 38)
+        floatBtn.Position = UDim2.new(0, 18, 0.5, -190)
+        floatBtn.AutoButtonColor = false
+        floatBtn.Font = Enum.Font.GothamBold
+        floatBtn.TextSize = 13
+        floatBtn.Text = "⚡ PromtZo Hub"
+        floatBtn.Parent = screenGui
+        BindTheme(floatBtn, "BackgroundColor3", "BgCard")
+        BindTheme(floatBtn, "TextColor3", "Text")
+        Corner(floatBtn, 19)
+        Stroke(floatBtn, "Accent", 1.6, 0.1)
+        MakeDraggable(floatBtn, floatBtn)
+
+        -- Responsive Window Sizing
+        local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+        local winW = math.clamp(math.floor(vp.X * 0.76), 620, 860)
+        local winH = math.clamp(math.floor(vp.Y * 0.78), 410, 560)
+
+        local mainFrame = Instance.new("Frame")
+        mainFrame.Name = "MainWindow"
+        mainFrame.Size = UDim2.new(0, winW, 0, winH)
+        mainFrame.Position = UDim2.new(0.5, -math.floor(winW / 2), 0.5, -math.floor(winH / 2))
+        mainFrame.BackgroundTransparency = 0.04
+        mainFrame.ClipsDescendants = true
+        mainFrame.Parent = screenGui
+        BindTheme(mainFrame, "BackgroundColor3", "BgMain")
+        Corner(mainFrame, 14)
+        Stroke(mainFrame, "Stroke", 1.5, 0.15)
+
+        -- Top Accent Glow Line
+        local topGlow = Instance.new("Frame")
+        topGlow.Size = UDim2.new(1, 0, 0, 3)
+        topGlow.BorderSizePixel = 0
+        topGlow.Parent = mainFrame
+        BindTheme(topGlow, "BackgroundColor3", "Accent")
+
+        -- Header Bar
+        local topBar = Instance.new("Frame")
+        topBar.Name = "TopBar"
+        topBar.Size = UDim2.new(1, 0, 0, 52)
+        topBar.Position = UDim2.new(0, 0, 0, 3)
+        topBar.BackgroundTransparency = 0.3
+        topBar.Parent = mainFrame
+        BindTheme(topBar, "BackgroundColor3", "BgSidebar")
+        MakeDraggable(topBar, mainFrame)
+
+        local brandBadge = Instance.new("Frame")
+        brandBadge.Size = UDim2.new(0, 34, 0, 34)
+        brandBadge.Position = UDim2.new(0, 14, 0.5, -17)
+        brandBadge.Parent = topBar
+        BindTheme(brandBadge, "BackgroundColor3", "Accent")
+        Corner(brandBadge, 9)
+
+        local brandIcon = Instance.new("TextLabel")
+        brandIcon.Size = UDim2.new(1, 0, 1, 0)
+        brandIcon.BackgroundTransparency = 1
+        brandIcon.Font = Enum.Font.GothamBlack
+        brandIcon.TextSize = 18
+        brandIcon.TextColor3 = Color3.fromRGB(255, 255, 255)
+        brandIcon.Text = "🐜"
+        brandIcon.Parent = brandBadge
+
+        local titleLabel = Instance.new("TextLabel")
+        titleLabel.Size = UDim2.new(0, 220, 0, 20)
+        titleLabel.Position = UDim2.new(0, 58, 0, 8)
+        titleLabel.BackgroundTransparency = 1
+        titleLabel.Font = Enum.Font.GothamBlack
+        titleLabel.TextSize = 16
+        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        titleLabel.Text = tostring(cfg.Title or "PromtZo Hub")
+        titleLabel.Parent = topBar
+        BindTheme(titleLabel, "TextColor3", "Text")
+
+        local subTitleLabel = Instance.new("TextLabel")
+        subTitleLabel.Size = UDim2.new(0, 260, 0, 16)
+        subTitleLabel.Position = UDim2.new(0, 58, 0, 28)
+        subTitleLabel.BackgroundTransparency = 1
+        subTitleLabel.Font = Enum.Font.GothamMedium
+        subTitleLabel.TextSize = 11
+        subTitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        subTitleLabel.Text = tostring(cfg.SubTitle or "Build An Ant Empire")
+        subTitleLabel.Parent = topBar
+        BindTheme(subTitleLabel, "TextColor3", "SubText")
+
+        -- Search Box in Header
+        local searchBoxFrame = Instance.new("Frame")
+        searchBoxFrame.Size = UDim2.new(0, 195, 0, 32)
+        searchBoxFrame.Position = UDim2.new(1, -315, 0.5, -16)
+        searchBoxFrame.Parent = topBar
+        BindTheme(searchBoxFrame, "BackgroundColor3", "BgElem")
+        Corner(searchBoxFrame, 8)
+        Stroke(searchBoxFrame, "Stroke", 1, 0.35)
+
+        local searchInput = Instance.new("TextBox")
+        searchInput.Size = UDim2.new(1, -18, 1, 0)
+        searchInput.Position = UDim2.new(0, 10, 0, 0)
+        searchInput.BackgroundTransparency = 1
+        searchInput.Font = Enum.Font.Gotham
+        searchInput.TextSize = 12
+        searchInput.TextXAlignment = Enum.TextXAlignment.Left
+        searchInput.PlaceholderText = "🔍 ค้นหาฟีเจอร์ / Search..."
+        searchInput.Text = ""
+        searchInput.ClearTextOnFocus = false
+        searchInput.Parent = searchBoxFrame
+        BindTheme(searchInput, "TextColor3", "Text")
+        BindTheme(searchInput, "PlaceholderColor3", "SubText")
+
+        -- Language Toggle Button (TH / EN)
+        local langBtn = Instance.new("TextButton")
+        langBtn.Size = UDim2.new(0, 48, 0, 32)
+        langBtn.Position = UDim2.new(1, -110, 0.5, -16)
+        langBtn.Font = Enum.Font.GothamBold
+        langBtn.TextSize = 12
+        langBtn.Text = "🇹🇭 TH"
+        langBtn.Parent = topBar
+        BindTheme(langBtn, "BackgroundColor3", "BgElem")
+        BindTheme(langBtn, "TextColor3", "Text")
+        Corner(langBtn, 8)
+        Stroke(langBtn, "Stroke", 1, 0.3)
+
+        langBtn.MouseButton1Click:Connect(function()
+            local nextLang = Lib.Lang == "TH" and "EN" or "TH"
+            Lib:SetLanguage(nextLang)
+            langBtn.Text = nextLang == "TH" and "🇹🇭 TH" or "🇬🇧 EN"
+        end)
+
+        -- Minimize Button
+        local minBtn = Instance.new("TextButton")
+        minBtn.Size = UDim2.new(0, 38, 0, 32)
+        minBtn.Position = UDim2.new(1, -54, 0.5, -16)
+        minBtn.Font = Enum.Font.GothamBold
+        minBtn.TextSize = 16
+        minBtn.Text = "—"
+        minBtn.Parent = topBar
+        BindTheme(minBtn, "BackgroundColor3", "BgElem")
+        BindTheme(minBtn, "TextColor3", "Text")
+        Corner(minBtn, 8)
+        Stroke(minBtn, "Stroke", 1, 0.3)
+
+        local isVisible = true
+        local function ToggleWindow()
+            isVisible = not isVisible
+            mainFrame.Visible = isVisible
+        end
+        minBtn.MouseButton1Click:Connect(ToggleWindow)
+        floatBtn.MouseButton1Click:Connect(ToggleWindow)
+
+        table.insert(Lib.UiConns, UserInputService.InputBegan:Connect(function(input, gp)
+            if not gp and input.KeyCode == Lib.MenuKey then
+                ToggleWindow()
+            end
+        end))
+
+        -- Sidebar Navigation
+        local sidebar = Instance.new("ScrollingFrame")
+        sidebar.Name = "Sidebar"
+        sidebar.Size = UDim2.new(0, 185, 1, -65)
+        sidebar.Position = UDim2.new(0, 8, 0, 59)
+        sidebar.BackgroundTransparency = 0.25
+        sidebar.ScrollBarThickness = 2
+        sidebar.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        sidebar.CanvasSize = UDim2.new(0, 0, 0, 0)
+        sidebar.BorderSizePixel = 0
+        sidebar.Parent = mainFrame
+        BindTheme(sidebar, "BackgroundColor3", "BgSidebar")
+        BindTheme(sidebar, "ScrollBarImageColor3", "Accent")
+        Corner(sidebar, 10)
+        Stroke(sidebar, "Stroke", 1, 0.4)
+
+        local sidePad = Instance.new("UIPadding")
+        sidePad.PaddingTop = UDim.new(0, 10)
+        sidePad.PaddingBottom = UDim.new(0, 10)
+        sidePad.PaddingLeft = UDim.new(0, 8)
+        sidePad.PaddingRight = UDim.new(0, 8)
+        sidePad.Parent = sidebar
+
+        local sideLayout = Instance.new("UIListLayout")
+        sideLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        sideLayout.Padding = UDim.new(0, 5)
+        sideLayout.Parent = sidebar
+
+        -- Pages Container
+        local pageContainer = Instance.new("Frame")
+        pageContainer.Name = "Pages"
+        pageContainer.Size = UDim2.new(1, -209, 1, -65)
+        pageContainer.Position = UDim2.new(0, 201, 0, 59)
+        pageContainer.BackgroundTransparency = 1
+        pageContainer.Parent = mainFrame
+
+        -- Live Search Filter Logic
+        searchInput:GetPropertyChangedSignal("Text"):Connect(function()
+            local q = searchInput.Text:lower():gsub("^%s*(.-)%s*$", "%1")
+            for _, item in ipairs(Lib.Searchables) do
+                if item.Frame and item.Frame.Parent then
+                    if q == "" then
+                        item.Frame.Visible = true
+                    else
+                        local hay = (ResolveText(item.Title) .. " " .. ResolveText(item.Desc)):lower()
+                        item.Frame.Visible = hay:find(q, 1, true) ~= nil
+                    end
+                end
+            end
+        end)
+
+        local Win = {
+            Root = screenGui,
+            Tabs = {},
+            ActiveTab = nil,
+            Order = 0,
+        }
+        Lib.Window = Win
+
+        function Win:AddTabSection(title)
+            Win.Order += 1
+            local secLbl = Instance.new("TextLabel")
+            secLbl.Size = UDim2.new(1, -8, 0, 22)
+            secLbl.BackgroundTransparency = 1
+            secLbl.Font = Enum.Font.GothamBold
+            secLbl.TextSize = 11
+            secLbl.TextXAlignment = Enum.TextXAlignment.Left
+            secLbl.LayoutOrder = Win.Order
+            secLbl.Parent = sidebar
+            BindTheme(secLbl, "TextColor3", "AccentGlow")
+            BindText(secLbl, title, "  ")
+        end
+
+        function Win:AddTab(title, icon, subtitle)
+            Win.Order += 1
+            local iconEmoji = IconMap[tostring(icon)] or "⚡"
+
+            local tabBtn = Instance.new("TextButton")
+            tabBtn.Size = UDim2.new(1, 0, 0, 36)
+            tabBtn.AutoButtonColor = false
+            tabBtn.Font = Enum.Font.GothamSemibold
+            tabBtn.TextSize = 13
+            tabBtn.TextXAlignment = Enum.TextXAlignment.Left
+            tabBtn.LayoutOrder = Win.Order
+            tabBtn.Parent = sidebar
+            Corner(tabBtn, 8)
+
+            local activeBar = Instance.new("Frame")
+            activeBar.Size = UDim2.new(0, 4, 0, 18)
+            activeBar.Position = UDim2.new(0, 4, 0.5, -9)
+            activeBar.BorderSizePixel = 0
+            activeBar.Visible = false
+            activeBar.Parent = tabBtn
+            BindTheme(activeBar, "BackgroundColor3", "Accent")
+            Corner(activeBar, 3)
+
+            local tabTitleLbl = Instance.new("TextLabel")
+            tabTitleLbl.Size = UDim2.new(1, -18, 1, 0)
+            tabTitleLbl.Position = UDim2.new(0, 14, 0, 0)
+            tabTitleLbl.BackgroundTransparency = 1
+            tabTitleLbl.Font = Enum.Font.GothamSemibold
+            tabTitleLbl.TextSize = 13
+            tabTitleLbl.TextXAlignment = Enum.TextXAlignment.Left
+            tabTitleLbl.Parent = tabBtn
+            BindText(tabTitleLbl, title, iconEmoji .. "  ")
+
+            -- Tab Page
+            local page = Instance.new("ScrollingFrame")
+            page.Name = "TabPage"
+            page.Size = UDim2.new(1, 0, 1, 0)
+            page.BackgroundTransparency = 1
+            page.ScrollBarThickness = 3
+            page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+            page.CanvasSize = UDim2.new(0, 0, 0, 0)
+            page.BorderSizePixel = 0
+            page.Visible = false
+            page.Parent = pageContainer
+            BindTheme(page, "ScrollBarImageColor3", "Accent")
+
+            local pagePad = Instance.new("UIPadding")
+            pagePad.PaddingTop = UDim.new(0, 2)
+            pagePad.PaddingBottom = UDim.new(0, 14)
+            pagePad.PaddingRight = UDim.new(0, 6)
+            pagePad.Parent = page
+
+            -- Page Header Banner
+            local banner = Instance.new("Frame")
+            banner.Size = UDim2.new(1, 0, 0, 44)
+            banner.BackgroundTransparency = 0.25
+            banner.Parent = page
+            BindTheme(banner, "BackgroundColor3", "BgCard")
+            Corner(banner, 10)
+            Stroke(banner, "Stroke", 1, 0.4)
+
+            local bannerTitle = Instance.new("TextLabel")
+            bannerTitle.Size = UDim2.new(1, -24, 0, 20)
+            bannerTitle.Position = UDim2.new(0, 14, 0, 5)
+            bannerTitle.BackgroundTransparency = 1
+            bannerTitle.Font = Enum.Font.GothamBold
+            bannerTitle.TextSize = 14
+            bannerTitle.TextXAlignment = Enum.TextXAlignment.Left
+            bannerTitle.Parent = banner
+            BindTheme(bannerTitle, "TextColor3", "Text")
+            BindText(bannerTitle, title, iconEmoji .. "  ")
+
+            local bannerSub = Instance.new("TextLabel")
+            bannerSub.Size = UDim2.new(1, -24, 0, 15)
+            bannerSub.Position = UDim2.new(0, 14, 0, 24)
+            bannerSub.BackgroundTransparency = 1
+            bannerSub.Font = Enum.Font.Gotham
+            bannerSub.TextSize = 11
+            bannerSub.TextXAlignment = Enum.TextXAlignment.Left
+            bannerSub.Parent = banner
+            BindTheme(bannerSub, "TextColor3", "SubText")
+            BindText(bannerSub, subtitle or "")
+
+            -- Two-Column Container
+            local colsHolder = Instance.new("Frame")
+            colsHolder.Size = UDim2.new(1, 0, 0, 0)
+            colsHolder.Position = UDim2.new(0, 0, 0, 52)
+            colsHolder.AutomaticSize = Enum.AutomaticSize.Y
+            colsHolder.BackgroundTransparency = 1
+            colsHolder.Parent = page
+
+            local leftCol = Instance.new("Frame")
+            leftCol.Name = "LeftColumn"
+            leftCol.Size = UDim2.new(0.5, -5, 0, 0)
+            leftCol.AutomaticSize = Enum.AutomaticSize.Y
+            leftCol.BackgroundTransparency = 1
+            leftCol.Parent = colsHolder
+            local leftLayout = Instance.new("UIListLayout")
+            leftLayout.SortOrder = Enum.SortOrder.LayoutOrder
+            leftLayout.Padding = UDim.new(0, 10)
+            leftLayout.Parent = leftCol
+
+            local rightCol = Instance.new("Frame")
+            rightCol.Name = "RightColumn"
+            rightCol.Size = UDim2.new(0.5, -5, 0, 0)
+            rightCol.Position = UDim2.new(0.5, 5, 0, 0)
+            rightCol.AutomaticSize = Enum.AutomaticSize.Y
+            rightCol.BackgroundTransparency = 1
+            rightCol.Parent = rightCol.Parent or colsHolder
+            local rightLayout = Instance.new("UIListLayout")
+            rightLayout.SortOrder = Enum.SortOrder.LayoutOrder
+            rightLayout.Padding = UDim.new(0, 10)
+            rightLayout.Parent = rightCol
+
+            local TabObj = {
+                Btn = tabBtn,
+                Page = page,
+                ActiveBar = activeBar,
+                TitleLbl = tabTitleLbl,
+            }
+
+            local function UpdateTabVisual()
+                local isAct = (Win.ActiveTab == TabObj)
+                activeBar.Visible = isAct
+                tabBtn.BackgroundColor3 = isAct and Lib.Theme.BgElem or Lib.Theme.BgSidebar
+                tabBtn.BackgroundTransparency = isAct and 0.05 or 1
+                tabTitleLbl.TextColor3 = isAct and Lib.Theme.Text or Lib.Theme.SubText
+            end
+            table.insert(Lib.ThemeListeners, UpdateTabVisual)
+
+            local function SelectTab()
+                Win.ActiveTab = TabObj
+                for _, t in ipairs(Win.Tabs) do
+                    t.Page.Visible = (t == TabObj)
+                    t.UpdateVisual()
+                end
+            end
+            TabObj.UpdateVisual = UpdateTabVisual
+            tabBtn.MouseButton1Click:Connect(SelectTab)
+            table.insert(Win.Tabs, TabObj)
+            if #Win.Tabs == 1 then SelectTab() end
+
+            local function CreateGroupbox(col, gTitle, gIcon, gBadge)
+                local card = Instance.new("Frame")
+                card.Size = UDim2.new(1, 0, 0, 0)
+                card.AutomaticSize = Enum.AutomaticSize.Y
+                card.BackgroundTransparency = 0.08
+                card.Parent = col
+                BindTheme(card, "BackgroundColor3", "BgCard")
+                Corner(card, 10)
+                Stroke(card, "Stroke", 1, 0.3)
+
+                local cardPad = Instance.new("UIPadding")
+                cardPad.PaddingTop = UDim.new(0, 10)
+                cardPad.PaddingBottom = UDim.new(0, 10)
+                cardPad.PaddingLeft = UDim.new(0, 10)
+                cardPad.PaddingRight = UDim.new(0, 10)
+                cardPad.Parent = card
+
+                local cardLayout = Instance.new("UIListLayout")
+                cardLayout.SortOrder = Enum.SortOrder.LayoutOrder
+                cardLayout.Padding = UDim.new(0, 7)
+                cardLayout.Parent = card
+
+                -- Group Header
+                local header = Instance.new("Frame")
+                header.Size = UDim2.new(1, 0, 0, 24)
+                header.BackgroundTransparency = 1
+                header.Parent = card
+
+                local gEmoji = IconMap[tostring(gIcon)] or "🔸"
+                local hTitle = Instance.new("TextLabel")
+                hTitle.Size = UDim2.new(1, gBadge and -44 or -4, 1, 0)
+                hTitle.BackgroundTransparency = 1
+                hTitle.Font = Enum.Font.GothamBold
+                hTitle.TextSize = 13
+                hTitle.TextXAlignment = Enum.TextXAlignment.Left
+                hTitle.Parent = header
+                BindTheme(hTitle, "TextColor3", "AccentGlow")
+                BindText(hTitle, gTitle, gEmoji .. " ")
+
+                if gBadge then
+                    local badgeFrame = Instance.new("Frame")
+                    badgeFrame.Size = UDim2.new(0, 34, 0, 18)
+                    badgeFrame.Position = UDim2.new(1, -34, 0.5, -9)
+                    badgeFrame.Parent = header
+                    BindTheme(badgeFrame, "BackgroundColor3", "Accent")
+                    Corner(badgeFrame, 6)
+
+                    local badgeTxt = Instance.new("TextLabel")
+                    badgeTxt.Size = UDim2.new(1, 0, 1, 0)
+                    badgeTxt.BackgroundTransparency = 1
+                    badgeTxt.Font = Enum.Font.GothamBlack
+                    badgeTxt.TextSize = 10
+                    badgeTxt.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    badgeTxt.Text = tostring(gBadge)
+                    badgeTxt.Parent = badgeFrame
+                end
+
+                local divider = Instance.new("Frame")
+                divider.Size = UDim2.new(1, 0, 0, 1)
+                divider.BorderSizePixel = 0
+                divider.BackgroundTransparency = 0.45
+                divider.Parent = card
+                BindTheme(divider, "BackgroundColor3", "Stroke")
+
+                local Group = {}
+
+                function Group:AddLabel(text)
+                    local box = Instance.new("Frame")
+                    box.Size = UDim2.new(1, 0, 0, 0)
+                    box.AutomaticSize = Enum.AutomaticSize.Y
+                    box.BackgroundTransparency = 0.25
+                    box.Parent = card
+                    BindTheme(box, "BackgroundColor3", "BgElem")
+                    Corner(box, 8)
+                    Stroke(box, "Stroke", 1, 0.5)
+
+                    local pad = Instance.new("UIPadding")
+                    pad.PaddingTop = UDim.new(0, 8)
+                    pad.PaddingBottom = UDim.new(0, 8)
+                    pad.PaddingLeft = UDim.new(0, 10)
+                    pad.PaddingRight = UDim.new(0, 10)
+                    pad.Parent = box
+
+                    local lbl = Instance.new("TextLabel")
+                    lbl.Size = UDim2.new(1, 0, 0, 0)
+                    lbl.AutomaticSize = Enum.AutomaticSize.Y
+                    lbl.BackgroundTransparency = 1
+                    lbl.Font = Enum.Font.GothamMedium
+                    lbl.TextSize = 12
+                    lbl.LineHeight = 1.25
+                    lbl.TextWrapped = true
+                    lbl.TextXAlignment = Enum.TextXAlignment.Left
+                    lbl.Parent = box
+                    BindTheme(lbl, "TextColor3", "Text")
+                    BindText(lbl, text)
+
+                    return {
+                        SetText = function(_, newTxt)
+                            if lbl.Parent then
+                                lbl.Text = ResolveText(newTxt)
+                            end
+                        end,
+                    }
+                end
+
+                function Group:AddParagraph(info)
+                    local pFrame = Instance.new("Frame")
+                    pFrame.Size = UDim2.new(1, 0, 0, 0)
+                    pFrame.AutomaticSize = Enum.AutomaticSize.Y
+                    pFrame.BackgroundTransparency = 0.25
+                    pFrame.Parent = card
+                    BindTheme(pFrame, "BackgroundColor3", "BgElem")
+                    Corner(pFrame, 8)
+
+                    local pad = Instance.new("UIPadding")
+                    pad.PaddingTop = UDim.new(0, 8)
+                    pad.PaddingBottom = UDim.new(0, 8)
+                    pad.PaddingLeft = UDim.new(0, 10)
+                    pad.PaddingRight = UDim.new(0, 10)
+                    pad.Parent = pFrame
+
+                    local lay = Instance.new("UIListLayout")
+                    lay.SortOrder = Enum.SortOrder.LayoutOrder
+                    lay.Padding = UDim.new(0, 4)
+                    lay.Parent = pFrame
+
+                    local pTitle = Instance.new("TextLabel")
+                    pTitle.Size = UDim2.new(1, 0, 0, 16)
+                    pTitle.BackgroundTransparency = 1
+                    pTitle.Font = Enum.Font.GothamBold
+                    pTitle.TextSize = 12
+                    pTitle.TextXAlignment = Enum.TextXAlignment.Left
+                    pTitle.Parent = pFrame
+                    BindTheme(pTitle, "TextColor3", "AccentGlow")
+                    BindText(pTitle, info.Title or "")
+
+                    local pContent = Instance.new("TextLabel")
+                    pContent.Size = UDim2.new(1, 0, 0, 0)
+                    pContent.AutomaticSize = Enum.AutomaticSize.Y
+                    pContent.BackgroundTransparency = 1
+                    pContent.Font = Enum.Font.Gotham
+                    pContent.TextSize = 11
+                    pContent.LineHeight = 1.2
+                    pContent.TextWrapped = true
+                    pContent.TextXAlignment = Enum.TextXAlignment.Left
+                    pContent.Parent = pFrame
+                    BindTheme(pContent, "TextColor3", "SubText")
+                    BindText(pContent, info.Content or "")
+                end
+
+                function Group:AddToggle(id, info)
+                    local row = Instance.new("Frame")
+                    row.Size = UDim2.new(1, 0, 0, info.Description and 46 or 34)
+                    row.BackgroundTransparency = 0.2
+                    row.Parent = card
+                    BindTheme(row, "BackgroundColor3", "BgElem")
+                    Corner(row, 8)
+                    Stroke(row, "Stroke", 1, 0.55)
+
+                    local tLbl = Instance.new("TextLabel")
+                    tLbl.Size = UDim2.new(1, -64, 0, 18)
+                    tLbl.Position = UDim2.new(0, 10, 0, info.Description and 6 or 8)
+                    tLbl.BackgroundTransparency = 1
+                    tLbl.Font = Enum.Font.GothamSemibold
+                    tLbl.TextSize = 12
+                    tLbl.TextTruncate = Enum.TextTruncate.AtEnd
+                    tLbl.TextXAlignment = Enum.TextXAlignment.Left
+                    tLbl.Parent = row
+                    BindTheme(tLbl, "TextColor3", "Text")
+                    BindText(tLbl, info.Text or id)
+
+                    if info.Description then
+                        local dLbl = Instance.new("TextLabel")
+                        dLbl.Size = UDim2.new(1, -64, 0, 14)
+                        dLbl.Position = UDim2.new(0, 10, 0, 25)
+                        dLbl.BackgroundTransparency = 1
+                        dLbl.Font = Enum.Font.Gotham
+                        dLbl.TextSize = 10
+                        dLbl.TextTruncate = Enum.TextTruncate.AtEnd
+                        dLbl.TextXAlignment = Enum.TextXAlignment.Left
+                        dLbl.Parent = row
+                        BindTheme(dLbl, "TextColor3", "SubText")
+                        BindText(dLbl, info.Description)
+                    end
+
+                    local switchBg = Instance.new("Frame")
+                    switchBg.Size = UDim2.new(0, 40, 0, 20)
+                    switchBg.Position = UDim2.new(1, -50, 0.5, -10)
+                    switchBg.Parent = row
+                    Corner(switchBg, 10)
+                    Stroke(switchBg, "Stroke", 1, 0.3)
+
+                    local knob = Instance.new("Frame")
+                    knob.Size = UDim2.new(0, 14, 0, 14)
+                    knob.Position = UDim2.new(0, 3, 0.5, -7)
+                    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+                    knob.Parent = switchBg
+                    Corner(knob, 7)
+
+                    local hitBtn = Instance.new("TextButton")
+                    hitBtn.Size = UDim2.new(1, 0, 1, 0)
+                    hitBtn.BackgroundTransparency = 1
+                    hitBtn.Text = ""
+                    hitBtn.Parent = row
+
+                    local ToggleObj = {
+                        Value = info.Default == true,
+                        BlockedReason = nil,
+                    }
+
+                    local function RefreshSwitch()
+                        local on = ToggleObj.Value
+                        Tween(switchBg, 0.18, { BackgroundColor3 = on and Lib.Theme.Accent or Lib.Theme.BgCard })
+                        Tween(knob, 0.18, { Position = on and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7) })
+                    end
+                    table.insert(Lib.ThemeListeners, RefreshSwitch)
+
+                    function ToggleObj:SetValue(val)
+                        if ToggleObj.BlockedReason and val then
+                            Lib:Notify("PromtZo Hub", ToggleObj.BlockedReason, 4, "Error")
+                            return
+                        end
+                        ToggleObj.Value = (val == true)
+                        RefreshSwitch()
+                        if info.Callback then
+                            task.spawn(info.Callback, ToggleObj.Value)
+                        end
+                    end
+
+                    function ToggleObj:SetBlocked(reason)
+                        ToggleObj.BlockedReason = reason
+                    end
+
+                    function ToggleObj:AddKeyPicker(keyId, keyInfo)
+                        local currentKey = nil
+                        if type(keyInfo.Default) == "string" and keyInfo.Default ~= "None" and Enum.KeyCode[keyInfo.Default] then
+                            currentKey = Enum.KeyCode[keyInfo.Default]
+                        end
+                        local keyBtn = Instance.new("TextButton")
+                        keyBtn.Size = UDim2.new(0, 44, 0, 18)
+                        keyBtn.Position = UDim2.new(1, -98, 0.5, -9)
+                        keyBtn.Font = Enum.Font.GothamBold
+                        keyBtn.TextSize = 10
+                        keyBtn.Text = currentKey and currentKey.Name or "None"
+                        keyBtn.Parent = row
+                        BindTheme(keyBtn, "BackgroundColor3", "BgCard")
+                        BindTheme(keyBtn, "TextColor3", "SubText")
+                        Corner(keyBtn, 5)
+                        Stroke(keyBtn, "Stroke", 1, 0.4)
+                        tLbl.Size = UDim2.new(1, -108, 0, 18)
+
+                        local binding = false
+                        keyBtn.MouseButton1Click:Connect(function()
+                            binding = true
+                            keyBtn.Text = "..."
+                        end)
+
+                        table.insert(Lib.UiConns, UserInputService.InputBegan:Connect(function(inp, gp)
+                            if binding then
+                                if inp.UserInputType == Enum.UserInputType.Keyboard then
+                                    binding = false
+                                    if inp.KeyCode == Enum.KeyCode.Escape or inp.KeyCode == Enum.KeyCode.Backspace then
+                                        currentKey = nil
+                                        keyBtn.Text = "None"
+                                    else
+                                        currentKey = inp.KeyCode
+                                        keyBtn.Text = inp.KeyCode.Name
+                                    end
+                                end
+                            elseif not gp and currentKey and inp.KeyCode == currentKey then
+                                ToggleObj:SetValue(not ToggleObj.Value)
+                            end
+                        end))
+                        return ToggleObj
+                    end
+
+                    hitBtn.MouseButton1Click:Connect(function()
+                        ToggleObj:SetValue(not ToggleObj.Value)
+                    end)
+
+                    RefreshSwitch()
+                    Lib.Options[id] = ToggleObj
+                    table.insert(Lib.Searchables, { Frame = row, Title = info.Text or id, Desc = info.Description or "" })
+                    return ToggleObj
+                end
+
+                function Group:AddSlider(id, info)
+                    local minVal = tonumber(info.Min) or 0
+                    local maxVal = tonumber(info.Max) or 100
+                    local rounding = tonumber(info.Rounding) or 0
+                    local suffix = tostring(info.Suffix or "")
+
+                    local row = Instance.new("Frame")
+                    row.Size = UDim2.new(1, 0, 0, 46)
+                    row.BackgroundTransparency = 0.2
+                    row.Parent = card
+                    BindTheme(row, "BackgroundColor3", "BgElem")
+                    Corner(row, 8)
+                    Stroke(row, "Stroke", 1, 0.55)
+
+                    local sTitle = Instance.new("TextLabel")
+                    sTitle.Size = UDim2.new(0.65, -10, 0, 18)
+                    sTitle.Position = UDim2.new(0, 10, 0, 5)
+                    sTitle.BackgroundTransparency = 1
+                    sTitle.Font = Enum.Font.GothamSemibold
+                    sTitle.TextSize = 12
+                    sTitle.TextXAlignment = Enum.TextXAlignment.Left
+                    sTitle.Parent = row
+                    BindTheme(sTitle, "TextColor3", "Text")
+                    BindText(sTitle, info.Text or id)
+
+                    local valLbl = Instance.new("TextLabel")
+                    valLbl.Size = UDim2.new(0.35, -10, 0, 18)
+                    valLbl.Position = UDim2.new(0.65, 0, 0, 5)
+                    valLbl.BackgroundTransparency = 1
+                    valLbl.Font = Enum.Font.GothamBold
+                    valLbl.TextSize = 12
+                    valLbl.TextXAlignment = Enum.TextXAlignment.Right
+                    valLbl.Parent = row
+                    BindTheme(valLbl, "TextColor3", "AccentGlow")
+
+                    local track = Instance.new("TextButton")
+                    track.Size = UDim2.new(1, -20, 0, 8)
+                    track.Position = UDim2.new(0, 10, 0, 30)
+                    track.AutoButtonColor = false
+                    track.Text = ""
+                    track.Parent = row
+                    BindTheme(track, "BackgroundColor3", "BgCard")
+                    Corner(track, 4)
+
+                    local fill = Instance.new("Frame")
+                    fill.Size = UDim2.new(0, 0, 1, 0)
+                    fill.BorderSizePixel = 0
+                    fill.Parent = track
+                    BindTheme(fill, "BackgroundColor3", "Accent")
+                    Corner(fill, 4)
+
+                    local SliderObj = { Value = tonumber(info.Default) or minVal }
+
+                    local function RoundNumber(n)
+                        local mult = 10 ^ rounding
+                        return math.floor(n * mult + 0.5) / mult
+                    end
+
+                    function SliderObj:SetValue(v)
+                        local clamped = RoundNumber(math.clamp(tonumber(v) or minVal, minVal, maxVal))
+                        SliderObj.Value = clamped
+                        local alpha = (maxVal > minVal) and ((clamped - minVal) / (maxVal - minVal)) or 0
+                        Tween(fill, 0.08, { Size = UDim2.new(alpha, 0, 1, 0) })
+                        local fmt = rounding > 0 and ("%." .. tostring(rounding) .. "f%s") or "%.0f%s"
+                        valLbl.Text = string.format(fmt, clamped, suffix)
+                        if info.Callback then
+                            task.spawn(info.Callback, clamped)
+                        end
+                    end
+
+                    local sliding = false
+                    local function UpdateFromInput(input)
+                        local relX = math.clamp((input.Position.X - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), 0, 1)
+                        SliderObj:SetValue(minVal + (maxVal - minVal) * relX)
+                    end
+
+                    track.InputBegan:Connect(function(inp)
+                        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+                            sliding = true
+                            UpdateFromInput(inp)
+                        end
+                    end)
+                    table.insert(Lib.UiConns, UserInputService.InputEnded:Connect(function(inp)
+                        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+                            sliding = false
+                        end
+                    end))
+                    table.insert(Lib.UiConns, UserInputService.InputChanged:Connect(function(inp)
+                        if sliding and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
+                            UpdateFromInput(inp)
+                        end
+                    end))
+
+                    SliderObj:SetValue(SliderObj.Value)
+                    Lib.Options[id] = SliderObj
+                    table.insert(Lib.Searchables, { Frame = row, Title = info.Text or id, Desc = "" })
+                    return SliderObj
+                end
+
+                function Group:AddDropdown(id, info)
+                    local isMulti = info.Multi == true
+                    local values = type(info.Values) == "table" and table.clone(info.Values) or {}
+
+                    local container = Instance.new("Frame")
+                    container.Size = UDim2.new(1, 0, 0, 0)
+                    container.AutomaticSize = Enum.AutomaticSize.Y
+                    container.BackgroundTransparency = 0.2
+                    container.Parent = card
+                    BindTheme(container, "BackgroundColor3", "BgElem")
+                    Corner(container, 8)
+                    Stroke(container, "Stroke", 1, 0.55)
+
+                    local topRow = Instance.new("TextButton")
+                    topRow.Size = UDim2.new(1, 0, 0, 48)
+                    topRow.BackgroundTransparency = 1
+                    topRow.Text = ""
+                    topRow.Parent = container
+
+                    local dTitle = Instance.new("TextLabel")
+                    dTitle.Size = UDim2.new(1, -30, 0, 16)
+                    dTitle.Position = UDim2.new(0, 10, 0, 5)
+                    dTitle.BackgroundTransparency = 1
+                    dTitle.Font = Enum.Font.GothamSemibold
+                    dTitle.TextSize = 12
+                    dTitle.TextXAlignment = Enum.TextXAlignment.Left
+                    dTitle.Parent = topRow
+                    BindTheme(dTitle, "TextColor3", "Text")
+                    BindText(dTitle, info.Text or id)
+
+                    local selLbl = Instance.new("TextLabel")
+                    selLbl.Size = UDim2.new(1, -34, 0, 18)
+                    selLbl.Position = UDim2.new(0, 10, 0, 24)
+                    selLbl.BackgroundTransparency = 1
+                    selLbl.Font = Enum.Font.GothamMedium
+                    selLbl.TextSize = 11
+                    selLbl.TextTruncate = Enum.TextTruncate.AtEnd
+                    selLbl.TextXAlignment = Enum.TextXAlignment.Left
+                    selLbl.Parent = topRow
+                    BindTheme(selLbl, "TextColor3", "AccentGlow")
+
+                    local arrowLbl = Instance.new("TextLabel")
+                    arrowLbl.Size = UDim2.new(0, 20, 0, 20)
+                    arrowLbl.Position = UDim2.new(1, -26, 0.5, -10)
+                    arrowLbl.BackgroundTransparency = 1
+                    arrowLbl.Font = Enum.Font.GothamBold
+                    arrowLbl.TextSize = 12
+                    arrowLbl.Text = "▼"
+                    arrowLbl.Parent = topRow
+                    BindTheme(arrowLbl, "TextColor3", "SubText")
+
+                    local listFrame = Instance.new("ScrollingFrame")
+                    listFrame.Size = UDim2.new(1, -12, 0, 135)
+                    listFrame.Position = UDim2.new(0, 6, 0, 48)
+                    listFrame.BackgroundTransparency = 0.15
+                    listFrame.ScrollBarThickness = 2
+                    listFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+                    listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+                    listFrame.BorderSizePixel = 0
+                    listFrame.Visible = false
+                    listFrame.Parent = container
+                    BindTheme(listFrame, "BackgroundColor3", "BgCard")
+                    BindTheme(listFrame, "ScrollBarImageColor3", "Accent")
+                    Corner(listFrame, 6)
+
+                    local listPad = Instance.new("UIPadding")
+                    listPad.PaddingTop = UDim.new(0, 4)
+                    listPad.PaddingBottom = UDim.new(0, 4)
+                    listPad.PaddingLeft = UDim.new(0, 4)
+                    listPad.PaddingRight = UDim.new(0, 4)
+                    listPad.Parent = listFrame
+
+                    local listLayout = Instance.new("UIListLayout")
+                    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+                    listLayout.Padding = UDim.new(0, 3)
+                    listLayout.Parent = listFrame
+
+                    local DropObj = {
+                        Value = isMulti and (type(info.Default) == "table" and table.clone(info.Default) or {}) or info.Default,
+                        Values = values,
+                        List = nil,
+                        Thumb = nil,
+                    }
+
+                    local function UpdateDisplayLabel()
+                        if isMulti then
+                            local picked = {}
+                            for k, v in pairs(DropObj.Value or {}) do
+                                if v then table.insert(picked, tostring(k)) end
+                            end
+                            table.sort(picked)
+                            selLbl.Text = #picked > 0 and table.concat(picked, ", ") or (Lib.Lang == "TH" and "ทั้งหมด (All)" or "All")
+                        else
+                            selLbl.Text = tostring(DropObj.Value or "-")
+                        end
+                    end
+
+                    local function RebuildItems()
+                        for _, ch in ipairs(listFrame:GetChildren()) do
+                            if ch:IsA("TextButton") then ch:Destroy() end
+                        end
+                        for _, val in ipairs(DropObj.Values) do
+                            local itemBtn = Instance.new("TextButton")
+                            itemBtn.Size = UDim2.new(1, 0, 0, 26)
+                            itemBtn.AutoButtonColor = false
+                            itemBtn.Font = Enum.Font.GothamMedium
+                            itemBtn.TextSize = 11
+                            itemBtn.TextXAlignment = Enum.TextXAlignment.Left
+                            itemBtn.Parent = listFrame
+                            Corner(itemBtn, 5)
+
+                            local function RefreshItemColor()
+                                local active = isMulti and (DropObj.Value and DropObj.Value[val] == true) or (DropObj.Value == val)
+                                itemBtn.BackgroundColor3 = active and Lib.Theme.Accent or Lib.Theme.BgElem
+                                itemBtn.BackgroundTransparency = active and 0.15 or 0.4
+                                itemBtn.TextColor3 = active and Color3.fromRGB(255, 255, 255) or Lib.Theme.Text
+                                itemBtn.Text = (active and "  ✓ " or "    ") .. tostring(val)
+                            end
+                            RefreshItemColor()
+
+                            itemBtn.MouseButton1Click:Connect(function()
+                                if isMulti then
+                                    DropObj.Value[val] = not DropObj.Value[val] or nil
+                                    RefreshItemColor()
+                                    UpdateDisplayLabel()
+                                    if info.Callback then task.spawn(info.Callback, DropObj.Value) end
+                                else
+                                    DropObj.Value = val
+                                    listFrame.Visible = false
+                                    arrowLbl.Text = "▼"
+                                    RebuildItems()
+                                    UpdateDisplayLabel()
+                                    if info.Callback then task.spawn(info.Callback, DropObj.Value) end
+                                end
+                            end)
+                        end
+                    end
+
+                    function DropObj:SetValues(newVals)
+                        DropObj.Values = type(newVals) == "table" and newVals or {}
+                        if not isMulti and not DropObj.Value and #DropObj.Values > 0 then
+                            DropObj.Value = DropObj.Values[1]
+                        end
+                        RebuildItems()
+                        UpdateDisplayLabel()
+                    end
+
+                    function DropObj:SetValue(val)
+                        DropObj.Value = val
+                        RebuildItems()
+                        UpdateDisplayLabel()
+                        if info.Callback then task.spawn(info.Callback, DropObj.Value) end
+                    end
+
+                    function DropObj:SetImages() end
+
+                    topRow.MouseButton1Click:Connect(function()
+                        listFrame.Visible = not listFrame.Visible
+                        arrowLbl.Text = listFrame.Visible and "▲" or "▼"
+                    end)
+
+                    RebuildItems()
+                    UpdateDisplayLabel()
+                    Lib.Options[id] = DropObj
+                    table.insert(Lib.Searchables, { Frame = container, Title = info.Text or id, Desc = "" })
+                    return DropObj
+                end
+
+                function Group:AddInput(id, info)
+                    local row = Instance.new("Frame")
+                    row.Size = UDim2.new(1, 0, 0, 38)
+                    row.BackgroundTransparency = 0.2
+                    row.Parent = card
+                    BindTheme(row, "BackgroundColor3", "BgElem")
+                    Corner(row, 8)
+                    Stroke(row, "Stroke", 1, 0.55)
+
+                    local iTitle = Instance.new("TextLabel")
+                    iTitle.Size = UDim2.new(0.55, -10, 1, 0)
+                    iTitle.Position = UDim2.new(0, 10, 0, 0)
+                    iTitle.BackgroundTransparency = 1
+                    iTitle.Font = Enum.Font.GothamSemibold
+                    iTitle.TextSize = 12
+                    iTitle.TextXAlignment = Enum.TextXAlignment.Left
+                    iTitle.Parent = row
+                    BindTheme(iTitle, "TextColor3", "Text")
+                    BindText(iTitle, info.Text or id)
+
+                    local box = Instance.new("TextBox")
+                    box.Size = UDim2.new(0.42, -10, 0, 24)
+                    box.Position = UDim2.new(0.58, 0, 0.5, -12)
+                    box.Font = Enum.Font.GothamBold
+                    box.TextSize = 12
+                    box.Text = tostring(info.Default or "")
+                    box.ClearTextOnFocus = false
+                    box.Parent = row
+                    BindTheme(box, "BackgroundColor3", "BgCard")
+                    BindTheme(box, "TextColor3", "AccentGlow")
+                    Corner(box, 6)
+                    Stroke(box, "Stroke", 1, 0.35)
+
+                    local InputObj = { Value = tostring(info.Default or "") }
+                    function InputObj:SetValue(v)
+                        InputObj.Value = tostring(v)
+                        box.Text = InputObj.Value
+                        if info.Callback then task.spawn(info.Callback, InputObj.Value) end
+                    end
+
+                    box.FocusLost:Connect(function()
+                        InputObj:SetValue(box.Text)
+                    end)
+
+                    Lib.Options[id] = InputObj
+                    table.insert(Lib.Searchables, { Frame = row, Title = info.Text or id, Desc = "" })
+                    return InputObj
+                end
+
+                function Group:AddButton(info)
+                    local btn = Instance.new("TextButton")
+                    btn.Size = UDim2.new(1, 0, 0, 32)
+                    btn.AutoButtonColor = false
+                    btn.Font = Enum.Font.GothamBold
+                    btn.TextSize = 12
+                    btn.BackgroundTransparency = 0.1
+                    btn.Parent = card
+                    BindTheme(btn, "BackgroundColor3", "BgElem")
+                    BindTheme(btn, "TextColor3", "Text")
+                    Corner(btn, 8)
+                    Stroke(btn, "Accent", 1, 0.35)
+                    BindText(btn, info.Text or "Button", "⚡  ")
+
+                    btn.MouseEnter:Connect(function()
+                        Tween(btn, 0.15, { BackgroundColor3 = Lib.Theme.Accent, BackgroundTransparency = 0.05 })
+                    end)
+                    btn.MouseLeave:Connect(function()
+                        Tween(btn, 0.15, { BackgroundColor3 = Lib.Theme.BgElem, BackgroundTransparency = 0.1 })
+                    end)
+                    btn.MouseButton1Click:Connect(function()
+                        if info.Func then info.Func() end
+                    end)
+
+                    table.insert(Lib.Searchables, { Frame = btn, Title = info.Text or "", Desc = "" })
+                    return btn
+                end
+
+                return Group
+            end
+
+            function TabObj:AddLeftGroupbox(gTitle, gIcon, gBadge)
+                return CreateGroupbox(leftCol, gTitle, gIcon, gBadge)
+            end
+
+            function TabObj:AddRightGroupbox(gTitle, gIcon, gBadge)
+                return CreateGroupbox(rightCol, gTitle, gIcon, gBadge)
+            end
+
+            return TabObj
+        end
+
+        function Win:AddSettingsTab()
+            local T = function(en, th) return Lib:T(en, th) end
+            local setTab = Win:AddTab(T("UI Settings", "ตั้งค่าเมนู"), "sliders", T("Themes, language, and config manager", "ปรับแต่งธีมสี ภาษา และจัดการไฟล์ตั้งค่า"))
+
+            local themeGroup = setTab:AddLeftGroupbox(T("Theme & Appearance", "ธีมสีและการแสดงผล"), "sparkles", "NEW")
+            themeGroup:AddDropdown("PromtZoTheme", {
+                Text = T("Color Theme", "โทนสีของเมนู"),
+                Values = { "Cyber Violet", "Halloween Pumpkin", "Emerald Matrix", "Ocean Cyan" },
+                Default = "Cyber Violet",
+                Callback = function(v)
+                    Lib:SetTheme(v)
+                end,
+            })
+            themeGroup:AddDropdown("PromtZoLanguage", {
+                Text = T("Menu Language", "ภาษาของเมนู"),
+                Values = { "TH", "EN" },
+                Default = "TH",
+                Callback = function(v)
+                    Lib:SetLanguage(v)
+                    langBtn.Text = v == "TH" and "🇹🇭 TH" or "🇬🇧 EN"
+                end,
+            })
+
+            local cfgGroup = setTab:AddRightGroupbox(T("Configuration & Hub", "จัดการไฟล์ตั้งค่า"), "shield")
+            cfgGroup:AddButton({
+                Text = T("Save Current Config", "บันทึกการตั้งค่าปัจจุบัน (Save)"),
+                Func = function() Lib:SaveConfig() end,
+            })
+            cfgGroup:AddButton({
+                Text = T("Load Saved Config", "โหลดการตั้งค่าที่บันทึกไว้ (Load)"),
+                Func = function()
+                    Lib:LoadAutoloadConfig()
+                    Lib:Notify("PromtZo Hub", Lib.Lang == "TH" and "โหลดการตั้งค่าสำเร็จ" or "Config loaded!", 3, "Success")
+                end,
+            })
+            cfgGroup:AddButton({
+                Text = T("Unload PromtZo Hub", "ปิดสคริปต์และลบเมนู (Unload)"),
+                Func = function()
+                    if xDTaraZ.Unload then xDTaraZ.Unload() else Lib:Unload() end
+                end,
+            })
+        end
+
+        if type(cfg.OnUnlocked) == "function" then
+            task.spawn(cfg.OnUnlocked)
+        end
+        return Win
+    end
+
+    return Lib
 end
 
 ---@param key string
@@ -655,9 +2047,9 @@ xDTaraZ.GameLib.Apis.HalloweenInv = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find
 xDTaraZ.GameLib.Apis.ActiveWheel = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("Helper.ActiveWheel.State"))
 xDTaraZ.GameLib.Apis.ActivityDay = xDTaraZ.GameLib.Require(xDTaraZ.GameLib.Find("Helper.ActivityDayReward.State"))
 
--- Non-intrusive Outgoing Packet Sniffer (captures live SessionId, Wisp Pos, and Treasure Chest ID)
+-- Outgoing Packet Sniffer (captures live SessionId, Wisp Pos, and Treasure Chest ID)
 do
-    local okHook, _ = pcall(function()
+    pcall(function()
         if not hookmetamethod or not getnamecallmethod then return end
         local oldNamecall
         oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
@@ -687,9 +2079,6 @@ do
             return oldNamecall(self, ...)
         end)
     end)
-    if not okHook then
-        warn("[PromtZo Hub] hookmetamethod sniffer unavailable, using fallback scanners")
-    end
 end
 
 function xDTaraZ.Data.Snapshot()
@@ -864,21 +2253,6 @@ do
     local activity = xDTaraZ.GameLib.Apis.Activity
     xDTaraZ.Data.ActivityLabels, xDTaraZ.Data.ActivityIds = {}, {}
     xDTaraZ.Data.ActivityImages, xDTaraZ.Data.ActivityColors, xDTaraZ.Data.ActivitySprites = {}, {}, {}
-    local spriteGroups = {}
-    local assets = ReplicatedStorage:FindFirstChild("Assets")
-    local sprites = assets and assets:FindFirstChild("sprites")
-    if activity and sprites then
-        for _, module in ipairs(sprites:GetChildren()) do
-            if module:IsA("ModuleScript") then
-                for group, entries in pairs(xDTaraZ.GameLib.Require(module) or {}) do
-                    if type(entries) == "table" then
-                        spriteGroups[group] = spriteGroups[group] or {}
-                        for name, sprite in pairs(entries) do spriteGroups[group][name] = sprite end
-                    end
-                end
-            end
-        end
-    end
     if activity then
         pcall(function()
             xDTaraZ.GameLib.Call(activity.Init, activity)
@@ -886,14 +2260,6 @@ do
                 local label = tostring(entry.DisplayName) .. " (" .. tostring(entry.Price) .. ")"
                 xDTaraZ.Data.ActivityLabels[#xDTaraZ.Data.ActivityLabels + 1] = label
                 xDTaraZ.Data.ActivityIds[label] = entry.ProductId
-                local sprite = spriteGroups[entry.IconSpriteGroup] and spriteGroups[entry.IconSpriteGroup][entry.IconSpriteId]
-                if type(sprite) == "table" and type(sprite.Image) == "string" then
-                    xDTaraZ.Data.ActivityImages[label] = sprite.Image
-                    xDTaraZ.Data.ActivitySprites[label] = sprite
-                end
-                local ui = assets and assets:FindFirstChild("UI")
-                local gradient = ui and ui:FindFirstChild(tostring(entry.Rarity) .. "Gradient")
-                if gradient and gradient:IsA("UIGradient") then xDTaraZ.Data.ActivityColors[label] = gradient.Color.Keypoints[1].Value end
             end
         end)
     end
@@ -1155,7 +2521,7 @@ function xDTaraZ.Shop.RefreshGearSnapshot()
     EventRE:FireServer(xDTaraZ.Data.GearShopRequestEvent, { Action = "Snapshot" })
 end
 
--- Auto Clear Gear Shop (ซื้อของเคลียร์ช็อปอัตโนมัติ)
+-- Auto Clear Gear Shop
 function xDTaraZ.Shop.ClearGearShop()
     if xDTaraZ.Colony.ClaimsInFlight() then return false end
     return xDTaraZ.Util.Action("GearShop", function()
@@ -1294,10 +2660,9 @@ function xDTaraZ.Shop.ClearGearShop()
 end
 
 -- ==========================================
--- Halloween Event 2026 Functions (Verified from calls_002138.txt)
+-- Halloween Event 2026 Functions
 -- ==========================================
 
--- Check if player is currently inside the Halloween Boss Dungeon (-292, -371, -15048)
 function xDTaraZ.Halloween.IsInDungeon()
     local hrp = xDTaraZ.Util.GetHRP()
     if hrp and hrp.Position.Z < -5000 then
@@ -1312,7 +2677,6 @@ function xDTaraZ.Halloween.IsInDungeon()
     return false
 end
 
--- Try to resolve active Dungeon SessionId from module or GC if not yet sniffed
 function xDTaraZ.Halloween.GetSessionId()
     if type(State.DungeonSessionId) == "string" and #State.DungeonSessionId == 36 then
         return State.DungeonSessionId
@@ -1344,12 +2708,11 @@ function xDTaraZ.Halloween.GetSessionId()
     return State.DungeonSessionId
 end
 
--- Find backpack slot Pos for "Will-o'-Wisps"
 function xDTaraZ.Halloween.GetWispPos()
     local bp = xDTaraZ.GameLib.Apis.Backpack
     if type(bp) == "table" then
         pcall(function()
-            for k, v in pairs(bp) do
+            for _, v in pairs(bp) do
                 if type(v) == "table" then
                     for idx, item in pairs(v) do
                         if type(item) == "table" and (item.ItemId == "Will-o'-Wisps" or item.EntryKey == "Item:Will-o'-Wisps") then
@@ -1364,7 +2727,6 @@ function xDTaraZ.Halloween.GetWispPos()
     return State.WispSlotPos or 7
 end
 
--- Hold Will-o'-Wisps in Hand (exact call from calls_002138.txt)
 function xDTaraZ.Halloween.HoldWisps()
     local pos = xDTaraZ.Halloween.GetWispPos()
     EventRE:FireServer("SetBackpackHeldEntry", {
@@ -1381,7 +2743,6 @@ end
 function xDTaraZ.Halloween.TriggerPrompt(prompt, part)
     if not prompt or not prompt.Parent or not prompt.Enabled then return false end
     if not fireproximityprompt then return false end
-    -- Do not teleport out if currently fighting inside Halloween Dungeon
     if xDTaraZ.Halloween.IsInDungeon() then return false end
 
     local hrp = xDTaraZ.Util.GetHRP()
@@ -1412,7 +2773,6 @@ function xDTaraZ.Halloween.TriggerPrompt(prompt, part)
     return true
 end
 
--- 1. Open Pumpkin Chest (Treasure) -> RemoteEvent:FireServer("HalloweenTreasureRequest", "Open", id)
 function xDTaraZ.Halloween.OpenChest()
     if xDTaraZ.Halloween.IsInDungeon() then return false end
     return xDTaraZ.Util.Action("HalloweenChest", function()
@@ -1420,7 +2780,6 @@ function xDTaraZ.Halloween.OpenChest()
         local rootPart = treasure and (treasure:FindFirstChild("RootPart") or treasure.PrimaryPart or treasure:FindFirstChildWhichIsA("BasePart", true))
         local prompt = treasure and treasure:FindFirstChildWhichIsA("ProximityPrompt", true)
 
-        -- Check if Treasure has a dynamic ID attribute
         if treasure then
             local attrId = treasure:GetAttribute("TreasureId") or treasure:GetAttribute("ChestId") or treasure:GetAttribute("EntityId") or treasure:GetAttribute("Id")
             if type(attrId) == "number" then
@@ -1428,7 +2787,6 @@ function xDTaraZ.Halloween.OpenChest()
             end
         end
 
-        -- Fire exact packet from calls_002138.txt: RemoteEvent:FireServer("HalloweenTreasureRequest", "Open", 12)
         EventRE:FireServer("HalloweenTreasureRequest", "Open", State.TreasureChestId or 12)
 
         if prompt then
@@ -1440,7 +2798,6 @@ function xDTaraZ.Halloween.OpenChest()
     end)
 end
 
--- 2. Submit Will-o'-Wisps at HalloweenDungeonEntrance
 function xDTaraZ.Halloween.SubmitWisps()
     if xDTaraZ.Halloween.IsInDungeon() then return false end
     return xDTaraZ.Util.Action("HalloweenWisps", function()
@@ -1449,7 +2806,6 @@ function xDTaraZ.Halloween.SubmitWisps()
         local prompt = entrance:FindFirstChildWhichIsA("ProximityPrompt", true)
         local hrp = xDTaraZ.Util.GetHRP()
 
-        -- Hold Will-o'-Wisps first (exact sequence from calls_002138.txt)
         xDTaraZ.Halloween.HoldWisps()
         task.wait(0.08)
 
@@ -1489,7 +2845,6 @@ function xDTaraZ.Halloween.SubmitWisps()
     end)
 end
 
--- 3. Dungeon Auto Start (TransitionFinished + Start)
 function xDTaraZ.Halloween.StartDungeon()
     local sessionId = xDTaraZ.Halloween.GetSessionId()
     if State.DungeonTransitionId then
@@ -1504,7 +2859,6 @@ function xDTaraZ.Halloween.StartDungeon()
             SessionId = sessionId,
         })
     end
-    -- Also click StartBtn if visible in PlayerGui
     pcall(function()
         local pg = LocalPlayer:FindFirstChild("PlayerGui")
         local startBtn = pg and pg:FindFirstChild("HUDContainer") and pg.HUDContainer:FindFirstChild("DungeonPanel") and pg.HUDContainer.DungeonPanel:FindFirstChild("StartBtn")
@@ -1516,7 +2870,6 @@ function xDTaraZ.Halloween.StartDungeon()
     return true
 end
 
--- 4. Dungeon Auto ClickBoost (ECS_COMMAND -> DungeonCommand -> Action = "Click")
 function xDTaraZ.Halloween.DungeonClick()
     if not xDTaraZ.Halloween.IsInDungeon() and not State.DungeonSessionId then return false end
     local sessionId = xDTaraZ.Halloween.GetSessionId()
@@ -1534,13 +2887,11 @@ function xDTaraZ.Halloween.DungeonClick()
     return true
 end
 
--- 5. Dungeon Auto PlaceTimeCoin (ECS_COMMAND -> DungeonCommand -> Action = "PlaceTimeCoin")
 function xDTaraZ.Halloween.PlaceTimeCoin()
     if not xDTaraZ.Halloween.IsInDungeon() then return false end
     local sessionId = xDTaraZ.Halloween.GetSessionId()
     if not sessionId then return false end
 
-    -- Always hold Will-o'-Wisps before placing TimeCoin (as seen in calls_002138.txt at 48.64, 64.49, 67.45, 80.67, 90.20, 117.83, 145.11)
     xDTaraZ.Halloween.HoldWisps()
 
     local hrp = xDTaraZ.Util.GetHRP()
@@ -1558,7 +2909,6 @@ function xDTaraZ.Halloween.PlaceTimeCoin()
     return true
 end
 
--- 6. Quit Dungeon
 function xDTaraZ.Halloween.QuitDungeon()
     local sessionId = xDTaraZ.Halloween.GetSessionId()
     if not sessionId then return false end
@@ -1569,7 +2919,6 @@ function xDTaraZ.Halloween.QuitDungeon()
     return true
 end
 
--- 7. Toggle Halloween Broom Flight (BroomFlightRequest)
 function xDTaraZ.Halloween.ToggleBroom(enable)
     local char = xDTaraZ.Util.GetChar()
     if not char then return false end
@@ -1583,7 +2932,6 @@ function xDTaraZ.Halloween.ToggleBroom(enable)
     return true
 end
 
--- 8. Halloween Check-In (Knock Door)
 function xDTaraZ.Halloween.CheckIn()
     if xDTaraZ.Halloween.IsInDungeon() then return false end
     return xDTaraZ.Util.Action("HalloweenCheckIn", function()
@@ -1609,7 +2957,6 @@ function xDTaraZ.Halloween.CheckIn()
     end)
 end
 
--- 9. Halloween Spin Wheel
 function xDTaraZ.Halloween.SpinWheel()
     if xDTaraZ.Halloween.IsInDungeon() then return false end
     return xDTaraZ.Util.Action("HalloweenSpin", function()
@@ -1625,7 +2972,6 @@ function xDTaraZ.Halloween.SpinWheel()
     end)
 end
 
--- 10. Claim Halloween Activity Day Reward
 function xDTaraZ.Halloween.ClaimDayReward()
     if xDTaraZ.Halloween.IsInDungeon() then return false end
     return xDTaraZ.Util.Action("HalloweenDayReward", function()
@@ -1663,7 +3009,6 @@ function xDTaraZ.Halloween.ClaimDayReward()
     end)
 end
 
--- 11. Purchase Halloween Shop Item
 function xDTaraZ.Halloween.PurchaseShop(productId)
     return xDTaraZ.Util.Action("HalloweenShop", function()
         local selected = productId or State.Opt.HalloweenShopItem
@@ -2048,7 +3393,6 @@ function xDTaraZ.Collect.ClaimAllOnlineAwards()
     return claimed
 end
 
--- Updated from calls_002138.txt to include CarryIds = {} and PumpkinGrants = {}
 function xDTaraZ.Collect.ClaimAllAntRewards()
     local room = xDTaraZ.Colony.Room()
     if not room then return false end
@@ -2124,7 +3468,6 @@ xDTaraZ:Connect(EventRE.OnClientEvent, function(event, data)
     if not State.Alive then return end
     State.Replies[event] = { At = os.clock(), Payload = data }
 
-    -- Capture SessionId / TransitionId / Treasure Chest ID from incoming server events
     if type(data) == "table" then
         if type(data.SessionId) == "string" and #data.SessionId == 36 then
             State.DungeonSessionId = data.SessionId
@@ -2294,7 +3637,6 @@ local jobs = {
             end
         end,
     },
-    -- Gear Shop Auto Clear Job
     {
         name = "AutoGearShop",
         interval = 5.0,
@@ -2305,7 +3647,6 @@ local jobs = {
             end
         end,
     },
-    -- Halloween Event Jobs (Updated from calls_002138.txt)
     {
         name = "AutoHoldWisps",
         interval = 2.8,
@@ -2532,21 +3873,21 @@ local function BuildInterface()
     Library:OnUnload(xDTaraZ.Unload)
     Library:CreateWindow({
         Title = "PromtZo Hub",
-        SubTitle = "Build An Ant Empire (Halloween Fixed + GearShop)",
+        SubTitle = "Build An Ant Empire  •  Modern Edition v2.0",
         MenuKey = Enum.KeyCode.LeftControl,
         ConfigFolder = Config.SaveFolder,
         Language = "Auto",
-        Theme = "Overworld",
+        Theme = "Cyber Violet",
         OnUnlocked = function()
             local win = Library.Window
             win.Root:SetAttribute("PromtZoGameId", Config.GameId)
-            win.Root:SetAttribute("PromtZoBuild", "2026-11-01.2")
+            win.Root:SetAttribute("PromtZoBuild", "2026-11-01.3")
 
-            win:AddTabSection(T("Main", "หน้าหลัก"))
-            local mainTab = win:AddTab(T("Main", "หน้าหลัก"), "home", T("Colony overview & Kaitun", "ภาพรวมอาณาจักรและไก่ตัน"))
+            win:AddTabSection(T("DASHBOARD", "หน้าหลัก"))
+            local mainTab = win:AddTab(T("Overview & Kaitun", "ภาพรวมและไก่ตัน"), "home", T("Live colony metrics & autonomous Kaitun", "สถานะอาณาจักรแบบเรียลไทม์และบอตไก่ตันครบวงจร"))
 
-            local statusGroup = mainTab:AddLeftGroupbox(T("Colony Status", "สถานะอาณาจักร"), "activity")
-            local statusPara = statusGroup:AddLabel(T("Connecting to colony systems...", "กำลังเชื่อมต่อระบบ..."))
+            local statusGroup = mainTab:AddLeftGroupbox(T("Colony Live Dashboard", "สถานะอาณาจักรเรียลไทม์"), "activity", "LIVE")
+            local statusPara = statusGroup:AddLabel(T("Connecting to colony systems...", "กำลังเชื่อมต่อระบบอาณาจักรมด..."))
 
             local kaitunGroup = mainTab:AddLeftGroupbox(T("Kaitun Automation", "บอตไก่ตันอัตโนมัติ"), "bot", "OP")
             kaitunGroup:AddToggle("KaitunMaster", {
@@ -2561,58 +3902,56 @@ local function BuildInterface()
                     xDTaraZ.Util.Child(xDTaraZ.Economy.Step)
                 end,
             })
+            xDTaraZ.Util.Button(kaitunGroup, { Text = T("Stop All Automation", "หยุดการทำงานทั้งหมดทันที"), Func = xDTaraZ.Scheduler.Stop })
 
-            xDTaraZ.Util.Button(kaitunGroup, { Text = T("Stop All", "หยุดทั้งหมด"), Func = xDTaraZ.Scheduler.Stop })
-
-            local discordGroup = mainTab:AddRightGroupbox("Discord", "link")
-            discordGroup:AddLabel(Config.Discord)
-            xDTaraZ.Util.Button(discordGroup, {
-                Text = T("Copy Discord Link", "คัดลอกลิงก์ Discord"),
-                Func = function()
-                    xDTaraZ.Util.Clipboard(Config.Discord)
-                    xDTaraZ.Util.Later(function() Library:Notify("PromtZo Hub", "Discord link copied to clipboard", 5) end)
-                end,
-            })
-
-            local updateGroup = mainTab:AddRightGroupbox(T("Update Log", "บันทึกอัปเดต"), "bell")
-            for i = 1, math.min(2, #Config.UpdateLog) do
-                updateGroup:AddParagraph({
-                    Title = Config.UpdateLog[i][1],
-                    Content = Config.UpdateLog[i][2],
-                })
-            end
-
-            local actions = mainTab:AddRightGroupbox(T("Colony Actions", "จัดการรังมด"), "star")
-            xDTaraZ.Util.Button(actions, { Text = T("Claim Ready Rewards Now", "รับรางวัลที่พร้อมทันที"), Func = function()
-                xDTaraZ.Util.Child(function()
-                    xDTaraZ.Collect.ClaimDailyEvents()
-                    xDTaraZ.Collect.ClaimAllOnlineAwards()
-                end)
-            end })
-            xDTaraZ.Util.Button(actions, { Text = T("Collect Ant Food Now", "เก็บอาหารจากมดทันที"), Func = function()
-                xDTaraZ.Util.Child(xDTaraZ.Collect.ClaimAllWorkerFood)
-            end })
-            actions:AddToggle("AutoAntRewards", {
-                Text = T("Auto Collect Ant Rewards", "เก็บรางวัลจากมดอัตโนมัติ"), Default = false,
-                Callback = function(value) State.Opt.AutoAntRewards = value end,
-            })
-            xDTaraZ.Util.Button(actions, { Text = T("Collect Ant Rewards Now", "เก็บรางวัลจากมดทันที"), Func = function()
-                xDTaraZ.Util.Child(xDTaraZ.Collect.ClaimAllAntRewards)
-            end })
             kaitunGroup:AddDropdown("UpgradePriority", {
                 Text = T("Upgrade Priority", "ลำดับการอัปเกรด"), Values = { "Pool first", "Stats first" }, Default = "Pool first",
                 Callback = function(value) State.Opt.UpgradePriority = value end,
             })
             kaitunGroup:AddInput("KeepGold", {
-                Text = T("Keep Cash", "เก็บเงินสำรอง"), Default = "1000", Numeric = true, Finished = true,
+                Text = T("Keep Cash Reserve", "เก็บเงินสำรองขั้นต่ำ"), Default = "1000", Numeric = true, Finished = true,
                 Callback = function(value)
                     local amount = tonumber(value)
                     if amount and amount == amount and amount >= 0 and amount < math.huge then State.Opt.KeepGold = math.floor(amount) end
                 end,
             })
 
-            win:AddTabSection(T("Farming", "ฟาร์ม"))
-            local farmTab = win:AddTab(T("Farm & Colony", "ฟาร์มและรังมด"), "leaf", T("Food production and ant recruitment", "การผลิตอาหารและการสุ่มมด"))
+            local actions = mainTab:AddRightGroupbox(T("Quick Colony Actions", "คำสั่งด่วนประจำรัง"), "star")
+            actions:AddToggle("AutoAntRewards", {
+                Text = T("Auto Collect Ant Rewards", "เก็บรางวัลและฟักทองจากมดอัตโนมัติ"), Default = false,
+                Description = T("Claims carried rewards & PumpkinGrants from ants", "เก็บของรางวัลที่มดถืออยู่ทั้งหมดอัตโนมัติ"),
+                Callback = function(value) State.Opt.AutoAntRewards = value end,
+            })
+            xDTaraZ.Util.Button(actions, { Text = T("Collect Ant Rewards Now", "เก็บรางวัลจากมดทันที"), Func = function()
+                xDTaraZ.Util.Child(xDTaraZ.Collect.ClaimAllAntRewards)
+            end })
+            xDTaraZ.Util.Button(actions, { Text = T("Claim Ready Rewards Now", "รับรางวัลออนไลน์ & รายวันทันที"), Func = function()
+                xDTaraZ.Util.Child(function()
+                    xDTaraZ.Collect.ClaimDailyEvents()
+                    xDTaraZ.Collect.ClaimAllOnlineAwards()
+                end)
+            end })
+            xDTaraZ.Util.Button(actions, { Text = T("Collect Ant Food Now", "เก็บอาหารจากมดงานทันที"), Func = function()
+                xDTaraZ.Util.Child(xDTaraZ.Collect.ClaimAllWorkerFood)
+            end })
+
+            local updateGroup = mainTab:AddRightGroupbox(T("Update Log & Community", "อัปเดตล่าสุดและคอมมูนิตี้"), "bell")
+            for i = 1, math.min(2, #Config.UpdateLog) do
+                updateGroup:AddParagraph({
+                    Title = Config.UpdateLog[i][1],
+                    Content = Config.UpdateLog[i][2],
+                })
+            end
+            xDTaraZ.Util.Button(updateGroup, {
+                Text = T("Copy Discord Link", "คัดลอกลิงก์ Discord"),
+                Func = function()
+                    xDTaraZ.Util.Clipboard(Config.Discord)
+                    xDTaraZ.Util.Later(function() Library:Notify("PromtZo Hub", "Discord link copied to clipboard!", 4, "Success") end)
+                end,
+            })
+
+            win:AddTabSection(T("COLONY & FARM", "ระบบฟาร์ม"))
+            local farmTab = win:AddTab(T("Farm & Colony", "ฟาร์มและรังมด"), "leaf", T("Food production, compost, and ant recruitment", "การผลิตอาหาร เครื่องหมักปุ๋ย และการสุ่มมด"))
 
             local foodGroup = farmTab:AddLeftGroupbox(T("Food Economy", "เศรษฐกิจอาหาร"), "coins", "OP")
             foodGroup:AddToggle("AutoWorkerFood", {
@@ -2658,7 +3997,7 @@ local function BuildInterface()
                 Callback = function(v) State.Opt.AutoCollectFood = v end,
             })
             xDTaraZ.Util.Button(foodGroup, {
-                Text = T("Collect Nest Food Now", "เก็บอาหารทันที"),
+                Text = T("Collect Nest Food Now", "เก็บอาหารจากรังทันที"),
                 Func = function()
                     xDTaraZ.Farm.CollectFood()
                 end,
@@ -2687,7 +4026,7 @@ local function BuildInterface()
                 Text = T("Upgrade Compost Now", "อัปเกรดเครื่องหมักปุ๋ยทันที"),
                 Func = function()
                     xDTaraZ.Colony.CompostUpgrade()
-                    xDTaraZ.Util.Later(function() Library:Notify("PromtZo Hub", "Compost upgrade requested", 3) end)
+                    xDTaraZ.Util.Later(function() Library:Notify("PromtZo Hub", "Compost upgrade requested", 3, "Success") end)
                 end,
             })
 
@@ -2757,14 +4096,14 @@ local function BuildInterface()
                 end,
             })
 
-            win:AddTabSection(T("Progression", "พัฒนา"))
-            local progTab = win:AddTab(T("Progression & Shop", "อัปเกรดและร้านค้า"), "trending-up", T("Stat upgrades, Gear Shop, and rewards", "อัปสเตตัส เหมาคลังร้านค้า และรางวัล"))
+            win:AddTabSection(T("PROGRESSION & SHOPS", "อัปเกรดและร้านค้า"))
+            local progTab = win:AddTab(T("Upgrades & Gear Shop", "อัปเกรดและเหมาคลังร้านค้า"), "trending-up", T("Stat upgrades, Auto Clear Gear Shop, and rewards", "อัปสเตตัส เหมาคลังร้านอุปกรณ์ และแลกโค้ด"))
 
             local poolGroup = progTab:AddLeftGroupbox(T("Ant Pool Upgrade", "อัปเกรดตู้สุ่มมด"), "arrow-up-circle", "OP")
             poolGroup:AddToggle("AutoPool", {
                 Text = T("Auto Upgrade Pool", "อัปเกรดตู้สุ่มอัตโนมัติ"),
                 Default = false,
-                Description = T("Upgrades the pool when cash allows", "เพิ่มระดับตู้สุ่มอัตโนมัติเมื่ออาหารพอ"),
+                Description = T("Upgrades the pool when cash allows", "เพิ่มระดับตู้สุ่มอัตโนมัติเมื่อเงินพอ"),
                 Callback = function(v) State.Opt.AutoPool = v end,
             })
             poolGroup:AddSlider("PoolBurst", {
@@ -2798,7 +4137,7 @@ local function BuildInterface()
                 Callback = function(v) State.Opt.AttrTarget = v end,
             })
             attrGroup:AddToggle("UpgradeAllAttr", {
-                Text = T("Auto Select Stat", "อัปเกรดทุกสเตตัสพร้อมกัน"),
+                Text = T("Auto Select Best Stat", "เลือกสเตตัสที่คุ้มที่สุดอัตโนมัติ"),
                 Default = false,
                 Description = T("Selects the next affordable stat", "อัปเกรดสเตตัสครบทุกสาย"),
                 Callback = function(v) State.Opt.UpgradeAllAttr = v end,
@@ -2855,14 +4194,10 @@ local function BuildInterface()
             })
 
             local shopGroup = progTab:AddRightGroupbox(T("Activity Shop & Rewards", "ร้านค้ากิจกรรมและโค้ด"), "shopping-bag")
-            local activityDropdown = shopGroup:AddDropdown("ActivityItem", {
+            shopGroup:AddDropdown("ActivityItem", {
                 Text = T("Activity Item", "สินค้ากิจกรรม"), Values = xDTaraZ.Data.ActivityLabels, Searchable = true,
                 Callback = function(value) State.Opt.ActivityItem = xDTaraZ.Data.ActivityIds[value] end,
             })
-            if activityDropdown.SetImages then
-                activityDropdown:SetImages(xDTaraZ.Data.ActivityImages, xDTaraZ.Data.ActivityColors)
-                State.ActivityDropdown = activityDropdown
-            end
             shopGroup:AddToggle("AutoActivity", {
                 Text = T("Auto Buy Activity Shop", "ซื้อร้านกิจกรรมอัตโนมัติ"),
                 Default = false,
@@ -2891,14 +4226,11 @@ local function BuildInterface()
                 Text = T("Redeem All Codes", "แลกโค้ดทั้งหมดทันที"),
                 Func = function()
                     xDTaraZ.Rewards.RedeemAll()
-                    xDTaraZ.Util.Later(function() Library:Notify("PromtZo Hub", "Checking code responses...", 5) end)
+                    xDTaraZ.Util.Later(function() Library:Notify("PromtZo Hub", "Checking code responses...", 4, "Info") end)
                 end,
             })
 
-            -- ==========================================
-            -- Halloween Event Tab (Fixed from calls_002138.txt)
-            -- ==========================================
-            win:AddTabSection(T("Events", "กิจกรรมพิเศษ"))
+            win:AddTabSection(T("SPECIAL EVENTS", "กิจกรรมพิเศษ"))
             local hallTab = win:AddTab(T("Halloween Event", "กิจกรรมฮาโลวีน"), "flame", T("Halloween 2026 & Dungeon Boss automation", "ระบบกิจกรรมฮาโลวีนและตีบอสดันเจียนอัตโนมัติ"))
 
             local hallMainGroup = hallTab:AddLeftGroupbox(T("Halloween World & Chest", "หีบฟักทองและส่งดวงไฟวิญญาณ"), "sparkles", "OP")
@@ -3039,7 +4371,7 @@ local function BuildInterface()
                 end,
             })
 
-            win:AddTabSection(T("Misc", "อื่นๆ"))
+            win:AddTabSection(T("WORLD & PLAYER", "โลกและตัวละคร"))
             local worldTab = win:AddTab(T("World & Visuals", "โลกและสายตา"), "swords", T("Bosses, teleports, and visual ESP", "บอส วาร์ป และระบบมองทะลุ"))
 
             local bossGroup = worldTab:AddLeftGroupbox(T("World Boss", "บอสโลก"), "flame", "OP")
@@ -3057,17 +4389,17 @@ local function BuildInterface()
             })
             local tpGroup = worldTab:AddLeftGroupbox(T("Teleports", "จุดวาร์ป"), "map-pin")
             local destination = tpGroup:AddDropdown("Destination", {
-                Text = T("Destination", "จุดหมาย"), Values = {}, Searchable = true,
+                Text = T("Destination", "จุดหมายปลายทาง"), Values = {}, Searchable = true,
                 Callback = function(value) State.Opt.Destination = value end,
             })
             xDTaraZ.Util.Button(tpGroup, { Text = T("Refresh Destinations", "รีเฟรชจุดวาร์ป"), Func = function()
                 local names = xDTaraZ.Teleport.Refresh()
                 xDTaraZ.Util.Later(function() destination:SetValues(names) end)
             end })
-            xDTaraZ.Util.Button(tpGroup, { Text = T("Teleport Now", "วาร์ปทันที"), Func = function()
+            xDTaraZ.Util.Button(tpGroup, { Text = T("Teleport Now", "วาร์ปไปยังจุดที่เลือกทันที"), Func = function()
                 return xDTaraZ.Teleport.Travel(State.Opt.Destination)
             end })
-            xDTaraZ.Util.Button(tpGroup, { Text = T("Return Now", "กลับจุดเดิมทันที"), Func = xDTaraZ.Teleport.Return })
+            xDTaraZ.Util.Button(tpGroup, { Text = T("Return to Previous Pos", "วาร์ปกลับจุดเดิมทันที"), Func = xDTaraZ.Teleport.Return })
             xDTaraZ.Util.Child(function()
                 local names = xDTaraZ.Teleport.Refresh()
                 xDTaraZ.Util.Later(function() destination:SetValues(names) end)
@@ -3246,25 +4578,6 @@ local function BuildInterface()
                 end,
             })
 
-            if Library.Compat then
-                for index, paths in pairs(xDTaraZ.GameLib.Missing()) do
-                    local option = Library.Options[index]
-                    if option then Library.Compat.Block(option, "Missing game dependency: " .. table.concat(paths, ", ")) end
-                end
-                Library.Compat.NeedCap(Library.Options.AutoLootBossCoins, "Prompt")
-                local dependencies = {
-                    KaitunMaster = "Context", AutoRoll = "Context", AutoClaimRolled = "Context", AutoCollectFood = "Carry", AutoWorkerFood = "Context", AutoAntRewards = "Context",
-                    AutoSell = "Carry", AutoEquipBest = "Backpack", AutoPlaceAnts = "Backpack",
-                    AutoPool = "PlayerData", AutoAttr = "Context", AutoActivity = "Activity",
-                    AutoOnlineAward = "Online", AutoCompostPull = "Compost", AutoCompostUpgrade = "Compost",
-                }
-                for index, api in pairs(dependencies) do
-                    if not xDTaraZ.GameLib.Apis[api] and Library.Options[index] then
-                        Library.Compat.Block(Library.Options[index], "Game data unavailable on this executor")
-                    end
-                end
-            end
-
             win:AddSettingsTab()
 
             xDTaraZ.Util.Try(xDTaraZ.Scheduler.Boot)
@@ -3272,6 +4585,7 @@ local function BuildInterface()
             pcall(PromtZoBanner.Ready)
             Library:Every(Config.PumpInterval, xDTaraZ.Util.Pump)
             pcall(function() Library:LoadAutoloadConfig() end)
+            Library:Notify("PromtZo Hub", "โหลดเมนูโฉมใหม่ v2.0 สำเร็จ! กดปุ่ม ⚡ PromtZo เพื่อพับเก็บหน้าจอได้", 5, "Success")
 
             xDTaraZ.Util.Child(function()
                 while State.Alive and Library and Library.Window do
@@ -3280,11 +4594,13 @@ local function BuildInterface()
                         local maxSlots = LocalPlayer:GetAttribute("MaxAntSlots") or 1
                         local roomIdx = LocalPlayer:GetAttribute("RoomIndex") or 1
                         local nestLayer = LocalPlayer:GetAttribute("NestLayer") or 1
-                        local txt = string.format("Room: %s  |  Nest Layer: %s  |  Ant Slots: %s  |  Carried Food: %s  |  Price: %s Gold",
-                            tostring(roomIdx), tostring(nestLayer), tostring(maxSlots), tostring(carriedFood), tostring(State.FoodPrice))
                         local snapshot = xDTaraZ.Data.Snapshot()
-                        txt = txt .. string.format("\nCash: %.0f | Food: %.0f | Gear: %d | Halloween: %d | Dungeon Clicks: %d\n%s",
-                            snapshot.Gold, snapshot.Food, State.Metrics.GearBought, State.Metrics.HalloweenActions, State.Metrics.DungeonClicks, xDTaraZ.Util.StatusText())
+                        local txt = string.format(
+                            "🏠 ห้อง: %s   |   🕳️ ชั้นรังมด: %s   |   🐜 ช่องมด: %s   |   🍎 อาหารที่ถือ: %s (เรท %s)\n💰 เงิน: %.0f   |   🍖 อาหารคลัง: %.0f   |   🛒 เหมาช็อป: %d   |   🎃 ฮาโลวีน: %d   |   ⚔️ คลิกดัน: %d\n📡 สถานะ: %s",
+                            tostring(roomIdx), tostring(nestLayer), tostring(maxSlots), tostring(carriedFood), tostring(State.FoodPrice),
+                            snapshot.Gold, snapshot.Food, State.Metrics.GearBought, State.Metrics.HalloweenActions, State.Metrics.DungeonClicks,
+                            xDTaraZ.Util.StatusText()
+                        )
                         xDTaraZ.Util.Later(function() statusPara:SetText(txt) end)
                     end)
                     task.wait(Config.StatusInterval)
