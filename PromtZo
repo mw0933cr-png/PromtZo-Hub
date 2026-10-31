@@ -1,1 +1,1 @@
-loadstring(game:HttpGet(""))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/mw0933cr-png/PromtZo-Hub/refs/heads/main/PromtZo%20Hub"))()
